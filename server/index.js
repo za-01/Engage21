@@ -43,8 +43,8 @@ const app = express();
 });
 
 // Set up the path for the app.
-const quickstartPath = path.join(__dirname, '../app/public');
-app.use('/app', express.static(quickstartPath));
+const quickstartPath = path.join(__dirname, '../video/app/public');
+app.use('/video/app', express.static(quickstartPath));
 
 // Set up the path for the examples page.
 const examplesPath = path.join(__dirname, '../examples');
@@ -53,9 +53,9 @@ app.use('/examples', express.static(examplesPath));
 /**
  * Default to the Quick Start application.
  */
-app.get('/', (request, response) => {
-  response.redirect('/app');
-});
+// app.get('/', (request, response) => {
+//   response.redirect('/video/app');
+// });
 
 /**
  * Generate an Access Token for a chat application user - it generates a random
@@ -84,6 +84,33 @@ app.get('/token', function(request, response) {
   // Serialize the token to a JWT string.
   response.send(token.toJwt());
 });
+
+
+
+
+var credentials = require('./credentials.json');
+var TokenProvider = require('./lib/tokenprovider');
+var tokenProvider = new TokenProvider(credentials);
+
+if (credentials.authToken) {
+  console.warn('WARNING: The "authToken" field is deprecated. Please use "signingKeySecret".');
+}
+
+if (credentials.instanceSid) {
+  console.warn('WARNING: The "instanceSid" field is deprecated. Please use "serviceSid".');
+}
+
+app.get('/getToken', function(req, res) {
+  var identity = req.query && req.query.identity;
+  if (!identity) {
+    res.status(400).send('getToken requires an Identity to be provided');
+  }
+
+  var token = tokenProvider.getToken(identity);
+  res.send(token);
+});
+
+app.use(express.static(__dirname + '/public'));
 
 // Create http server and run it.
 const server = http.createServer(app);

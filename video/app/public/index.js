@@ -1,1009 +1,6 @@
 (function(){function r(e,n,t){function o(i,f){if(!n[i]){if(!e[i]){var c="function"==typeof require&&require;if(!f&&c)return c(i,!0);if(u)return u(i,!0);var a=new Error("Cannot find module '"+i+"'");throw a.code="MODULE_NOT_FOUND",a}var p=n[i]={exports:{}};e[i][0].call(p.exports,function(r){var n=e[i][1][r];return o(n||r)},p,p.exports,r,e,n,t)}return n[i].exports}for(var u="function"==typeof require&&require,i=0;i<t.length;i++)o(t[i]);return o}return r})()({1:[function(require,module,exports){
 'use strict';
 
-/**
- * Add URL parameters to the web app URL.
- * @param params - the parameters to add
- */
-function addUrlParams(params) {
-  const combinedParams = Object.assign(getUrlParams(), params);
-  const serializedParams = Object.entries(combinedParams)
-    .map(([name, value]) => `${name}=${encodeURIComponent(value)}`)
-    .join('&');
-  history.pushState(null, '', `${location.pathname}?${serializedParams}`);
-}
-
-/**
- * Generate an object map of URL parameters.
- * @returns {*}
- */
-function getUrlParams() {
-  const serializedParams = location.search.split('?')[1];
-  const nvpairs = serializedParams ? serializedParams.split('&') : [];
-  return nvpairs.reduce((params, nvpair) => {
-    const [name, value] = nvpair.split('=');
-    params[name] = decodeURIComponent(value);
-    return params;
-  }, {});
-}
-
-/**
- * Whether the web app is running on a mobile browser.
- * @type {boolean}
- */
-const isMobile = (() => {
-  if (typeof navigator === 'undefined' || typeof navigator.userAgent !== 'string') {
-    return false;
-  }
-  return /Mobile/.test(navigator.userAgent);
-})();
-
-module.exports = {
-  addUrlParams,
-  getUrlParams,
-  isMobile
-};
-
-},{}],2:[function(require,module,exports){
-'use strict';
-
-const { isSupported } = require('twilio-video');
-
-const { isMobile } = require('./browser');
-const joinRoom = require('./joinroom');
-const micLevel = require('./miclevel');
-const selectMedia = require('./selectmedia');
-const selectRoom = require('./selectroom');
-const showError = require('./showerror');
-
-const $modals = $('#modals');
-const $selectMicModal = $('#select-mic', $modals);
-const $selectCameraModal = $('#select-camera', $modals);
-const $showErrorModal = $('#show-error', $modals);
-const $joinRoomModal = $('#join-room', $modals);
-
-// ConnectOptions settings for a video web application.
-const connectOptions = {
-  // Available only in Small Group or Group Rooms only. Please set "Room Type"
-  // to "Group" or "Small Group" in your Twilio Console:
-  // https://www.twilio.com/console/video/configure
-  bandwidthProfile: {
-    video: {
-      dominantSpeakerPriority: 'high',
-      mode: 'collaboration',
-      clientTrackSwitchOffControl: 'auto',
-      contentPreferencesMode: 'auto'
-    }
-  },
-
-  // Available only in Small Group or Group Rooms only. Please set "Room Type"
-  // to "Group" or "Small Group" in your Twilio Console:
-  // https://www.twilio.com/console/video/configure
-  dominantSpeaker: true,
-
-  // Comment this line if you are playing music.
-  maxAudioBitrate: 16000,
-
-  // VP8 simulcast enables the media server in a Small Group or Group Room
-  // to adapt your encoded video quality for each RemoteParticipant based on
-  // their individual bandwidth constraints. This has no utility if you are
-  // using Peer-to-Peer Rooms, so you can comment this line.
-  preferredVideoCodecs: [{ codec: 'VP8', simulcast: true }],
-
-  // Capture 720p video @ 24 fps.
-  video: { height: 720, frameRate: 24, width: 1280 }
-};
-
-// For mobile browsers, limit the maximum incoming video bitrate to 2.5 Mbps.
-if (isMobile) {
-  connectOptions
-    .bandwidthProfile
-    .video
-    .maxSubscriptionBitrate = 2500000;
-}
-
-// On mobile browsers, there is the possibility of not getting any media even
-// after the user has given permission, most likely due to some other app reserving
-// the media device. So, we make sure users always test their media devices before
-// joining the Room. For more best practices, please refer to the following guide:
-// https://www.twilio.com/docs/video/build-js-video-application-recommendations-and-best-practices
-const deviceIds = {
-  audio: isMobile ? null : localStorage.getItem('audioDeviceId'),
-  video: isMobile ? null : localStorage.getItem('videoDeviceId')
-};
-
-/**
- * Select your Room name, your screen name and join.
- * @param [error=null] - Error from the previous Room session, if any
- */
-async function selectAndJoinRoom(error = null) {
-  const formData = await selectRoom($joinRoomModal, error);
-  if (!formData) {
-    // User wants to change the camera and microphone.
-    // So, show them the microphone selection modal.
-    deviceIds.audio = null;
-    deviceIds.video = null;
-    return selectMicrophone();
-  }
-  const { identity, roomName } = formData;
-
-  try {
-    // Fetch an AccessToken to join the Room.
-    const response = await fetch(`/token?identity=${identity}`);
-
-    // Extract the AccessToken from the Response.
-    const token = await response.text();
-
-    // Add the specified audio device ID to ConnectOptions.
-    connectOptions.audio = { deviceId: { exact: deviceIds.audio } };
-
-    // Add the specified Room name to ConnectOptions.
-    connectOptions.name = roomName;
-
-    // Add the specified video device ID to ConnectOptions.
-    connectOptions.video.deviceId = { exact: deviceIds.video };
-
-    // Join the Room.
-    await joinRoom(token, connectOptions);
-
-    // After the video session, display the room selection modal.
-    return selectAndJoinRoom();
-  } catch (error) {
-    return selectAndJoinRoom(error);
-  }
-}
-
-/**
- * Select your camera.
- */
-async function selectCamera() {
-  if (deviceIds.video === null) {
-    try {
-      deviceIds.video = await selectMedia('video', $selectCameraModal, videoTrack => {
-        const $video = $('video', $selectCameraModal);
-        videoTrack.attach($video.get(0))
-      });
-    } catch (error) {
-      showError($showErrorModal, error);
-      return;
-    }
-  }
-  return selectAndJoinRoom();
-}
-
-/**
- * Select your microphone.
- */
-async function selectMicrophone() {
-  if (deviceIds.audio === null) {
-    try {
-      deviceIds.audio = await selectMedia('audio', $selectMicModal, audioTrack => {
-        const $levelIndicator = $('svg rect', $selectMicModal);
-        const maxLevel = Number($levelIndicator.attr('height'));
-        micLevel(audioTrack, maxLevel, level => $levelIndicator.attr('y', maxLevel - level));
-      });
-    } catch (error) {
-      showError($showErrorModal, error);
-      return;
-    }
-  }
-  return selectCamera();
-}
-
-// If the current browser is not supported by twilio-video.js, show an error
-// message. Otherwise, start the application.
-window.addEventListener('load', isSupported ? selectMicrophone : () => {
-  showError($showErrorModal, new Error('This browser is not supported.'));
-});
-
-},{"./browser":1,"./joinroom":3,"./miclevel":4,"./selectmedia":6,"./selectroom":7,"./showerror":8,"twilio-video":50}],3:[function(require,module,exports){
-'use strict';
-
-const { connect, createLocalVideoTrack, Logger } = require('twilio-video');
-const { isMobile } = require('./browser');
-
-const $leave = $('#leave-room');
-const $room = $('#room');
-const $activeParticipant = $('div#active-participant > div.participant.main', $room);
-const $activeVideo = $('video', $activeParticipant);
-const $participants = $('div#participants', $room);
-const mutehelper = require('./mutehelper');
-// The current active Participant in the Room.
-let activeParticipant = null;
-
-// Whether the user has selected the active Participant by clicking on
-// one of the video thumbnails.
-let isActiveParticipantPinned = false;
-
-/**
- * Set the active Participant's video.
- * @param participant - the active Participant
- */
-function setActiveParticipant(participant) {
-  if (activeParticipant) {
-    const $activeParticipant = $(`div#${activeParticipant.sid}`, $participants);
-    $activeParticipant.removeClass('active');
-    $activeParticipant.removeClass('pinned');
-
-    // Detach any existing VideoTrack of the active Participant.
-    const { track: activeTrack } = Array.from(activeParticipant.videoTracks.values())[0] || {};
-    if (activeTrack) {
-      activeTrack.detach($activeVideo.get(0));
-      $activeVideo.css('opacity', '0');
-    }
-  }
-
-  // Set the new active Participant.
-  activeParticipant = participant;
-  const { identity, sid } = participant;
-  const $participant = $(`div#${sid}`, $participants);
-
-  $participant.addClass('active');
-  if (isActiveParticipantPinned) {
-    $participant.addClass('pinned');
-  }
-
-  // Attach the new active Participant's video.
-  const { track } = Array.from(participant.videoTracks.values())[0] || {};
-  if (track) {
-    track.attach($activeVideo.get(0));
-    $activeVideo.css('opacity', '');
-  }
-
-  // Set the new active Participant's identity
-  $activeParticipant.attr('data-identity', identity);
-}
-
-/**
- * Set the current active Participant in the Room.
- * @param room - the Room which contains the current active Participant
- */
-function setCurrentActiveParticipant(room) {
-  const { dominantSpeaker, localParticipant } = room;
-  setActiveParticipant(dominantSpeaker || localParticipant);
-}
-
-/**
- * Set up the Participant's media container.
- * @param participant - the Participant whose media container is to be set up
- * @param room - the Room that the Participant joined
- */
-function setupParticipantContainer(participant, room) {
-  const { identity, sid } = participant;
-
-  // Add a container for the Participant's media.
-  const $container = $(`<div class="participant" data-identity="${identity}" id="${sid}">
-    <audio autoplay ${participant === room.localParticipant ? 'muted' : ''} style="opacity: 0"></audio>
-                      <i id="activeIcon" class="fas fa-volume-up"></i>
-                      <i id="inactiveIcon" class="fas fa-volume-mute"></i>
-    <video autoplay muted playsinline style="opacity: 0"></video>
-  </div>`);
-
-  // Toggle the pinning of the active Participant's video.
-  $container.on('click', () => {
-    if (activeParticipant === participant && isActiveParticipantPinned) {
-      // Unpin the RemoteParticipant and update the current active Participant.
-      setVideoPriority(participant, null);
-      isActiveParticipantPinned = false;
-      setCurrentActiveParticipant(room);
-    } else {
-      // Pin the RemoteParticipant as the active Participant.
-      if (isActiveParticipantPinned) {
-        setVideoPriority(activeParticipant, null);
-      }
-      setVideoPriority(participant, 'high');
-      isActiveParticipantPinned = true;
-      setActiveParticipant(participant);
-    }
-  });
-
-  // Add the Participant's container to the DOM.
-  $participants.append($container);
-}
-
-/**
- * Set the VideoTrack priority for the given RemoteParticipant. This has no
- * effect in Peer-to-Peer Rooms.
- * @param participant - the RemoteParticipant whose VideoTrack priority is to be set
- * @param priority - null | 'low' | 'standard' | 'high'
- */
-function setVideoPriority(participant, priority) {
-  participant.videoTracks.forEach(publication => {
-    const track = publication.track;
-    if (track && track.setPriority) {
-      track.setPriority(priority);
-    }
-  });
-}
-
-/**
- * Attach a Track to the DOM.
- * @param track - the Track to attach
- * @param participant - the Participant which published the Track
- */
-function attachTrack(track, participant) {
-  // Attach the Participant's Track to the thumbnail.
-  const $media = $(`div#${participant.sid} > ${track.kind}`, $participants);
-  $media.css('opacity', '');
-  track.attach($media.get(0));
-
-  // If the attached Track is a VideoTrack that is published by the active
-  // Participant, then attach it to the main video as well.
-  if (track.kind === 'video' && participant === activeParticipant) {
-    track.attach($activeVideo.get(0));
-    $activeVideo.css('opacity', '');
-  }
-}
-
-/**
- * Detach a Track from the DOM.
- * @param track - the Track to be detached
- * @param participant - the Participant that is publishing the Track
- */
-function detachTrack(track, participant) {
-  // Detach the Participant's Track from the thumbnail.
-  const $media = $(`div#${participant.sid} > ${track.kind}`, $participants);
-  $media.css('opacity', '0');
-  track.detach($media.get(0));
-
-  // If the detached Track is a VideoTrack that is published by the active
-  // Participant, then detach it from the main video as well.
-  if (track.kind === 'video' && participant === activeParticipant) {
-    track.detach($activeVideo.get(0));
-    $activeVideo.css('opacity', '0');
-  }
-}
-
-/**
- * Handle the Participant's media.
- * @param participant - the Participant
- * @param room - the Room that the Participant joined
- */
-function participantConnected(participant, room) {
-  // Set up the Participant's media container.
-  setupParticipantContainer(participant, room);
-
-  // Handle the TrackPublications already published by the Participant.
-  participant.tracks.forEach(publication => {
-    trackPublished(publication, participant);
-  });
-
-  // Handle theTrackPublications that will be published by the Participant later.
-  participant.on('trackPublished', publication => {
-    trackPublished(publication, participant);
-  });
-  
-}
-
-/**
- * Handle a disconnected Participant.
- * @param participant - the disconnected Participant
- * @param room - the Room that the Participant disconnected from
- */
-function participantDisconnected(participant, room) {
-  // If the disconnected Participant was pinned as the active Participant, then
-  // unpin it so that the active Participant can be updated.
-  if (activeParticipant === participant && isActiveParticipantPinned) {
-    isActiveParticipantPinned = false;
-    setCurrentActiveParticipant(room);
-  }
-
-  // Remove the Participant's media container.
-  $(`div#${participant.sid}`, $participants).remove();
-}
-
-/**
- * Handle to the TrackPublication's media.
- * @param publication - the TrackPublication
- * @param participant - the publishing Participant
- */
-function trackPublished(publication, participant) {
-  // If the TrackPublication is already subscribed to, then attach the Track to the DOM.
-  if (publication.track) {
-    attachTrack(publication.track, participant);
-  }
-
-  // Once the TrackPublication is subscribed to, attach the Track to the DOM.
-  publication.on('subscribed', track => {
-    attachTrack(track, participant);
-  });
-
-  // Once the TrackPublication is unsubscribed from, detach the Track from the DOM.
-  publication.on('unsubscribed', track => {
-    detachTrack(track, participant);
-  });
-}
-
-/**
- * Join a Room.
- * @param token - the AccessToken used to join a Room
- * @param connectOptions - the ConnectOptions used to join a Room
- */
-async function joinRoom(token, connectOptions) {
-  // Comment the next two lines to disable verbose logging.
-  const logger = Logger.getLogger('twilio-video');
-  logger.setLevel('debug');
-
-  // Join to the Room with the given AccessToken and ConnectOptions.
-  const room = await connect(token, connectOptions);
-
-  // Save the LocalVideoTrack.
-  let localVideoTrack = Array.from(room.localParticipant.videoTracks.values())[0].track;
-
-  // Make the Room available in the JavaScript console for debugging.
-  window.room = room;
-
-  // Handle the LocalParticipant's media.
-  participantConnected(room.localParticipant, room);
-
-  // Subscribe to the media published by RemoteParticipants already in the Room.
-  room.participants.forEach(participant => {
-    participantConnected(participant, room);
-  });
-
-  // Subscribe to the media published by RemoteParticipants joining the Room later.
-  room.on('participantConnected', participant => {
-    participantConnected(participant, room);
-  });
-
-  // Handle a disconnected RemoteParticipant.
-  room.on('participantDisconnected', participant => {
-    participantDisconnected(participant, room);
-  });
-
-  // Set the current active Participant.
-  setCurrentActiveParticipant(room);
-
-  // Update the active Participant when changed, only if the user has not
-  // pinned any particular Participant as the active Participant.
-  room.on('dominantSpeakerChanged', () => {
-    if (!isActiveParticipantPinned) {
-      setCurrentActiveParticipant(room);
-    }
-  });
-
-  // Leave the Room when the "Leave Room" button is clicked.
-  $leave.click(function onLeave() {
-    $leave.off('click', onLeave);
-    room.disconnect();
-  });
-
-  return new Promise((resolve, reject) => {
-    // Leave the Room when the "beforeunload" event is fired.
-    window.onbeforeunload = () => {
-      room.disconnect();
-    };
-
-    if (isMobile) {
-      // TODO(mmalavalli): investigate why "pagehide" is not working in iOS Safari.
-      // In iOS Safari, "beforeunload" is not fired, so use "pagehide" instead.
-      window.onpagehide = () => {
-        room.disconnect();
-      };
-
-      // On mobile browsers, use "visibilitychange" event to determine when
-      // the app is backgrounded or foregrounded.
-      document.onvisibilitychange = async () => {
-        if (document.visibilityState === 'hidden') {
-          // When the app is backgrounded, your app can no longer capture
-          // video frames. So, stop and unpublish the LocalVideoTrack.
-          localVideoTrack.stop();
-          room.localParticipant.unpublishTrack(localVideoTrack);
-        } else {
-          // When the app is foregrounded, your app can now continue to
-          // capture video frames. So, publish a new LocalVideoTrack.
-          localVideoTrack = await createLocalVideoTrack(connectOptions.video);
-          await room.localParticipant.publishTrack(localVideoTrack);
-        }
-      };
-    }
-
-    room.once('disconnected', (room, error) => {
-      // Clear the event handlers on document and window..
-      window.onbeforeunload = null;
-      if (isMobile) {
-        window.onpagehide = null;
-        document.onvisibilitychange = null;
-      }
-
-      // Stop the LocalVideoTrack.
-      localVideoTrack.stop();
-
-      // Handle the disconnected LocalParticipant.
-      participantDisconnected(room.localParticipant, room);
-
-      // Handle the disconnected RemoteParticipants.
-      room.participants.forEach(participant => {
-        participantDisconnected(participant, room);
-      });
-
-      // Clear the active Participant's video.
-      $activeVideo.get(0).srcObject = null;
-
-      // Clear the Room reference used for debugging from the JavaScript console.
-      window.room = null;
-
-      if (error) {
-        // Reject the Promise with the TwilioError so that the Room selection
-        // modal (plus the TwilioError message) can be displayed.
-        reject(error);
-      } else {
-        // Resolve the Promise so that the Room selection modal can be
-        // displayed.
-        resolve();
-      }
-    });
-  });
-}
-
-const muteYourAudio = mutehelper.muteYourAudio;
-const muteYourVideo = mutehelper.muteYourVideo;
-const unmuteYourAudio = mutehelper.unmuteYourAudio;
-const unmuteYourVideo = mutehelper.unmuteYourVideo;
-const participantMutedOrUnmutedMedia = mutehelper.participantMutedOrUnmutedMedia;
-
-muteAudioButn.onclick = () => {
-  // alert("Hello! I am an alert box!!");
-  const mute = !muteAudioButn.classList.contains('muted');
-  // const activeIcon = document.getElementById('activeIcon');
-  // const inactiveIcon = document.getElementById('inactiveIcon');
-
-  if(mute) {
-    muteYourAudio(room);
-    muteAudioButn.classList.add('muted');
-    muteAudioButn.innerText = 'Enable Audio';
-    activeIcon.id = 'inactiveIcon';
-    inactiveIcon.id = 'activeIcon';
-
-  } else {
-    unmuteYourAudio(room);
-    muteAudioButn.classList.remove('muted');
-    muteAudioButn.innerText = 'Disable Audio';
-    activeIcon.id = 'inactiveIcon';
-    inactiveIcon.id = 'activeIcon';
-  }
-}
-muteVideoButn.onclick = () => {
-  const mute = !muteVideoButn.classList.contains('muted');
-
-  if(mute) {
-    muteYourVideo(room);
-    muteVideoButn.classList.add('muted');
-    muteVideoButn.innerText = 'Enable Video';
-  } else {
-    unmuteYourVideo(room);
-    muteVideoButn.classList.remove('muted');
-    muteVideoButn.innerText = 'Disable Video';
-  }
-}
-
-module.exports = joinRoom;
-
-},{"./browser":1,"./mutehelper":5,"twilio-video":50}],4:[function(require,module,exports){
-'use strict';
-
-const AudioContext = window.AudioContext || window.webkitAudioContext;
-const audioContext = AudioContext ? new AudioContext() : null;
-
-/**
- * Calculate the root mean square (RMS) of the given array.
- * @param samples
- * @returns {number} the RMS value
- */
-function rootMeanSquare(samples) {
-  const sumSq = samples.reduce((sumSq, sample) => sumSq + sample * sample, 0);
-  return Math.sqrt(sumSq / samples.length);
-}
-
-/**
- * Poll the microphone's input level.
- * @param audioTrack - the AudioTrack representing the microphone
- * @param maxLevel - the calculated level should be in the range [0 - maxLevel]
- * @param onLevel - called when the input level changes
- */
-module.exports = audioContext
-  ? function micLevel(audioTrack, maxLevel, onLevel) {
-      audioContext.resume().then(() => {
-        let rafID;
-
-        const initializeAnalyser = () => {
-          const analyser = audioContext.createAnalyser();
-          analyser.fftSize = 1024;
-          analyser.smoothingTimeConstant = 0.5;
-
-          const stream = new MediaStream([audioTrack.mediaStreamTrack]);
-          const audioSource = audioContext.createMediaStreamSource(stream);
-          const samples = new Uint8Array(analyser.frequencyBinCount);
-
-          audioSource.connect(analyser);
-          startAnimation(analyser, samples);
-        };
-
-        initializeAnalyser();
-
-        // We listen to when the Audio Track is started, and once it is,
-        // the Analyser Node is restarted.
-        audioTrack.on('started', initializeAnalyser);
-
-        let level = null;
-
-        function startAnimation(analyser, samples) {
-          window.cancelAnimationFrame(rafID);
-
-          rafID = requestAnimationFrame(function checkLevel() {
-            analyser.getByteFrequencyData(samples);
-            const rms = rootMeanSquare(samples);
-            const log2Rms = rms && Math.log2(rms);
-            const newLevel = Math.ceil((maxLevel * log2Rms) / 8);
-
-            if (level !== newLevel) {
-              level = newLevel;
-              onLevel(level);
-            }
-
-            rafID =  requestAnimationFrame(audioTrack.mediaStreamTrack.readyState === 'ended'
-              ? () => onLevel(0)
-              : checkLevel);
-          });
-        }
-      });
-    }
-  : function notSupported() {
-      // Do nothing.
-    };
-
-},{}],5:[function(require,module,exports){
-'use strict';
-
-/**
- * Mute/unmute your media in a Room.
- * @param {Room} room - The Room you have joined
- * @param {'audio'|'video'} kind - The type of media you want to mute/unmute
- * @param {'mute'|'unmute'} action - Whether you want to mute/unmute
- */
-function muteOrUnmuteYourMedia(room, kind, action) {
-  const publications = kind === 'audio'
-    ? room.localParticipant.audioTracks
-    : room.localParticipant.videoTracks;
-
-  publications.forEach(function(publication) {
-    if (action === 'mute') {
-      publication.track.disable();
-    } else {
-      publication.track.enable();
-    }
-  });
-}
-
-/**
- * Mute your audio in a Room.
- * @param {Room} room - The Room you have joined
- * @returns {void}
- */
-function muteYourAudio(room) {
-  muteOrUnmuteYourMedia(room, 'audio', 'mute');
-}
-
-/**
- * Mute your video in a Room.
- * @param {Room} room - The Room you have joined
- * @returns {void}
- */
-function muteYourVideo(room) {
-  muteOrUnmuteYourMedia(room, 'video', 'mute');
-}
-
-/**
- * Unmute your audio in a Room.
- * @param {Room} room - The Room you have joined
- * @returns {void}
- */
-function unmuteYourAudio(room) {
-  muteOrUnmuteYourMedia(room, 'audio', 'unmute');
-}
-
-/**
- * Unmute your video in a Room.
- * @param {Room} room - The Room you have joined
- * @returns {void}
- */
-function unmuteYourVideo(room) {
-  muteOrUnmuteYourMedia(room, 'video', 'unmute');
-}
-
-/**
- * A RemoteParticipant muted or unmuted its media.
- * @param {Room} room - The Room you have joined
- * @param {function} onMutedMedia - Called when a RemoteParticipant muted its media
- * @param {function} onUnmutedMedia - Called when a RemoteParticipant unmuted its media
- * @returns {void}
- */
-function participantMutedOrUnmutedMedia(room, onMutedMedia, onUnmutedMedia) {
-  room.on('trackSubscribed', function(track, publication, participant) {
-    track.on('disabled', function() {
-      return onMutedMedia(track, participant);
-    });
-    track.on('enabled', function() {
-      return onUnmutedMedia(track, participant);
-    });
-  });
-}
-
-exports.muteYourAudio = muteYourAudio;
-exports.muteYourVideo = muteYourVideo;
-exports.unmuteYourAudio = unmuteYourAudio;
-exports.unmuteYourVideo = unmuteYourVideo;
-exports.participantMutedOrUnmutedMedia = participantMutedOrUnmutedMedia;
-},{}],6:[function(require,module,exports){
-'use strict';
-
-const { createLocalTracks } = require('twilio-video');
-
-const localTracks = {
-  audio: null,
-  video: null
-};
-
-/**
- * Start capturing media from the given input device.
- * @param kind - 'audio' or 'video'
- * @param deviceId - the input device ID
- * @param render - the render callback
- * @returns {Promise<void>} Promise that is resolved if successful
- */
-async function applyInputDevice(kind, deviceId, render) {
-  // Create a new LocalTrack from the given Device ID.
-  const [track] = await createLocalTracks({ [kind]: { deviceId } });
-
-  // Stop the previous LocalTrack, if present.
-  if (localTracks[kind]) {
-    localTracks[kind].stop();
-  }
-
-  // Render the current LocalTrack.
-  localTracks[kind] = track;
-  render(track);
-}
-
-/**
- * Get the list of input devices of a given kind.
- * @param kind - 'audio' | 'video'
- * @returns {Promise<MediaDeviceInfo[]>} the list of media devices
- */
-async function getInputDevices(kind) {
-  const devices = await navigator.mediaDevices.enumerateDevices();
-  return devices.filter(device => device.kind === `${kind}input`);
-}
-
-/**
- * Select the input for the given media kind.
- * @param kind - 'audio' or 'video'
- * @param $modal - the modal for selecting the media input
- * @param render - the media render function
- * @returns {Promise<string>} the device ID of the selected media input
- */
-async function selectMedia(kind, $modal, render) {
-  const $apply = $('button', $modal);
-  const $inputDevices = $('select', $modal);
-  const setDevice = () => applyInputDevice(kind, $inputDevices.val(), render);
-
-  // Get the list of available media input devices.
-  let devices =  await getInputDevices(kind);
-
-  // Apply the default media input device.
-  await applyInputDevice(kind, devices[0].deviceId, render);
-
-  // If all device IDs and/or labels are empty, that means they were
-  // enumerated before the user granted media permissions. So, enumerate
-  // the devices again.
-  if (devices.every(({ deviceId, label }) => !deviceId || !label)) {
-    devices = await getInputDevices(kind);
-  }
-
-  // Populate the modal with the list of available media input devices.
-  $inputDevices.html(devices.map(({ deviceId, label }) => {
-    return `<option value="${deviceId}">${label}</option>`;
-  }));
-
-  return new Promise(resolve => {
-    $modal.on('shown.bs.modal', function onShow() {
-      $modal.off('shown.bs.modal', onShow);
-
-      // When the user selects a different media input device, apply it.
-      $inputDevices.change(setDevice);
-
-      // When the user clicks the "Apply" button, close the modal.
-      $apply.click(function onApply() {
-        $inputDevices.off('change', setDevice);
-        $apply.off('click', onApply);
-        $modal.modal('hide');
-      });
-    });
-
-    // When the modal is closed, save the device ID.
-    $modal.on('hidden.bs.modal', function onHide() {
-      $modal.off('hidden.bs.modal', onHide);
-
-      // Stop the LocalTrack, if present.
-      if (localTracks[kind]) {
-        localTracks[kind].stop();
-        localTracks[kind] = null;
-      }
-
-      // Resolve the Promise with the saved device ID.
-      const deviceId = $inputDevices.val();
-      localStorage.setItem(`${kind}DeviceId`, deviceId);
-      resolve(deviceId);
-    });
-
-    // Show the modal.
-    $modal.modal({
-      backdrop: 'static',
-      focus: true,
-      keyboard: false,
-      show: true
-    });
-  });
-}
-
-module.exports = selectMedia;
-
-},{"twilio-video":50}],7:[function(require,module,exports){
-'use strict';
-
-const { addUrlParams, getUrlParams } = require('./browser');
-const getUserFriendlyError = require('./userfriendlyerror');
-
-/**
- * Select your Room name and identity (screen name).
- * @param $modal - modal for selecting your Room name and identity
- * @param error - Error from the previous Room session, if any
- */
-function selectRoom($modal, error) {
-  const $alert = $('div.alert', $modal);
-  const $changeMedia = $('button.btn-dark', $modal);
-  const $identity = $('#screen-name', $modal);
-  const $join = $('button.btn-primary', $modal);
-  const $roomName = $('#room-name', $modal);
-
-  // If Room name is provided as a URL parameter, pre-populate the Room name field.
-  const { roomName } = getUrlParams();
-  if (roomName) {
-    $roomName.val(roomName);
-  }
-
-  // If any previously saved user name exists, pre-populate the user name field.
-  const identity = localStorage.getItem('userName');
-  if (identity) {
-    $identity.val(identity);
-  }
-
-  if (error) {
-    $alert.html(`<h5>${error.name}${error.message
-      ? `: ${error.message}`
-      : ''}</h5>${getUserFriendlyError(error)}`);
-    $alert.css('display', '');
-  } else {
-    $alert.css('display', 'none');
-  }
-
-  return new Promise(resolve => {
-    $modal.on('shown.bs.modal', function onShow() {
-      $modal.off('shown.bs.modal', onShow);
-      $changeMedia.click(function onChangeMedia() {
-        $changeMedia.off('click', onChangeMedia);
-        $modal.modal('hide');
-        resolve(null);
-      });
-
-      $join.click(function onJoin() {
-        const identity = $identity.val();
-        const roomName = $roomName.val();
-        if (identity && roomName) {
-          // Append the Room name to the web application URL.
-          addUrlParams({ roomName });
-
-          // Save the user name.
-          localStorage.setItem('userName', identity);
-
-          $join.off('click', onJoin);
-          $modal.modal('hide');
-        }
-      });
-    });
-
-    $modal.on('hidden.bs.modal', function onHide() {
-      $modal.off('hidden.bs.modal', onHide);
-      const identity = $identity.val();
-      const roomName = $roomName.val();
-      resolve({ identity, roomName });
-    });
-
-    $modal.modal({
-      backdrop: 'static',
-      focus: true,
-      keyboard: false,
-      show: true
-    });
-  });
-}
-
-module.exports = selectRoom;
-
-},{"./browser":1,"./userfriendlyerror":9}],8:[function(require,module,exports){
-'use strict';
-
-const getUserFriendlyError = require('./userfriendlyerror');
-
-/**
- * Show the given error.
- * @param $modal - modal for showing the error.
- * @param error - Error to be shown.
- */
-function showError($modal, error) {
-  // Add the appropriate error message to the alert.
-  $('div.alert', $modal).html(getUserFriendlyError(error));
-  $modal.modal({
-    backdrop: 'static',
-    focus: true,
-    keyboard: false,
-    show: true
-  });
-
-  $('#show-error-label', $modal).text(`${error.name}${error.message
-    ? `: ${error.message}`
-    : ''}`);
-}
-
-module.exports = showError;
-
-},{"./userfriendlyerror":9}],9:[function(require,module,exports){
-'use strict';
-
-const USER_FRIENDLY_ERRORS = {
-  NotAllowedError: () => {
-    return '<b>Causes: </b><br>1. The user has denied permission for your app to access the input device either by dismissing the permission dialog or clicking on the "deny" button.<br> 2. The user has denied permission for your app to access the input device in the browser settings.<br>'
-    +'<br><b>Solutions: </b><br> 1. The user should reload your app and grant permission to access the input device.<br> 2. The user should allow access to the input device in the browser settings and then reload your app.';
-  },
-  NotFoundError: () => {
-    return '<b>Cause: </b><br>1. The user has disabled the input device for the browser in the system settings.<br>2. The user\'s machine does not have such input device connected to it.<br>'
-    +'<br><b>Solution</b><br>1. The user should enable the input device for the browser in the system settings<br>2. The user should have atleast one input device connected.';
-  },
-  NotReadableError: () => {
-    return '<b>Cause: </b><br>The browser could not start media capture with the input device even after the user gave permission, probably because another app or tab has reserved the input device.<br>'
-    +'<br><b>Solution: </b><br>The user should close all other apps and tabs that have reserved the input device and reload your app, or worst case, restart the browser.';
-  },
-  OverconstrainedError: error => {
-    return error.constraint === 'deviceId'
-      ? '<b>Cause: </b><br>Your saved microphone or camera is no longer available.<br><br><b>Solution: </b><br>Please make sure the input device is connected to the machine.'
-      : '<b>Cause: </b><br>Could not satisfy the requested media constraints. One of the reasons '
-        + 'could be that your saved microphone or camera is no longer available.<br><br><b>Solution: </b><br>Please make sure the input device is connected to the machine.';
-  },
-  TypeError: () => {
-    return '<b>Cause: </b><br><code>navigator.mediaDevices</code> does not exist.<br>'
-    + '<br><b>Solution: </b><br>If you\'re sure that the browser supports '
-    + '<code>navigator.mediaDevices</code>, make sure your app is being served '
-    + 'from a secure context (<code>localhost</code> or an <code>https</code> domain).';
-  }
-};
-
-/**
- * Get a user friendly Error message.
- * @param error - the Error for which a user friendly message is needed
- * @returns {string} the user friendly message
- */
-function getUserFriendlyError(error) {
-  const errorName = [error.name, error.constructor.name].find(errorName => {
-    return errorName in USER_FRIENDLY_ERRORS;
-  });
-  return errorName ? USER_FRIENDLY_ERRORS[errorName](error) : error.message;
-}
-
-module.exports = getUserFriendlyError;
-
-},{}],10:[function(require,module,exports){
-'use strict';
-
 var flatMap = require('./util').flatMap;
 var guessBrowser = require('./util').guessBrowser;
 var guessBrowserVersion = require('./util').guessBrowserVersion;
@@ -1887,7 +884,7 @@ function standardizeFirefoxStats(response, isRemote) {
 
 module.exports = getStats;
 
-},{"./util":25,"./util/sdp":27}],11:[function(require,module,exports){
+},{"./util":16,"./util/sdp":18}],2:[function(require,module,exports){
 /* globals navigator */
 'use strict';
 
@@ -1913,7 +910,7 @@ function getUserMedia(constraints) {
 
 module.exports = getUserMedia;
 
-},{}],12:[function(require,module,exports){
+},{}],3:[function(require,module,exports){
 'use strict';
 
 var WebRTC = {};
@@ -1955,7 +952,7 @@ Object.defineProperties(WebRTC, {
 
 module.exports = WebRTC;
 
-},{"../package.json":28,"./getstats":10,"./getusermedia":11,"./mediastream":13,"./mediastreamtrack":14,"./rtcicecandidate":15,"./rtcpeerconnection":18,"./rtcsessiondescription":23}],13:[function(require,module,exports){
+},{"../package.json":19,"./getstats":1,"./getusermedia":2,"./mediastream":4,"./mediastreamtrack":5,"./rtcicecandidate":6,"./rtcpeerconnection":9,"./rtcsessiondescription":14}],4:[function(require,module,exports){
 /* globals MediaStream */
 'use strict';
 
@@ -1967,7 +964,7 @@ if (typeof MediaStream === 'function') {
   };
 }
 
-},{}],14:[function(require,module,exports){
+},{}],5:[function(require,module,exports){
 /* global MediaStreamTrack */
 'use strict';
 
@@ -1979,7 +976,7 @@ if (typeof MediaStreamTrack === 'function') {
   };
 }
 
-},{}],15:[function(require,module,exports){
+},{}],6:[function(require,module,exports){
 /* global RTCIceCandidate */
 'use strict';
 
@@ -1991,7 +988,7 @@ if (typeof RTCIceCandidate === 'function') {
   };
 }
 
-},{}],16:[function(require,module,exports){
+},{}],7:[function(require,module,exports){
 /* globals RTCDataChannel, RTCPeerConnection, RTCSessionDescription */
 'use strict';
 
@@ -2514,7 +1511,7 @@ function updateTrackIdsToSSRCs(sdpFormat, tracksToSSRCs, sdp) {
 
 module.exports = ChromeRTCPeerConnection;
 
-},{"../mediastream":13,"../rtcrtpsender":20,"../rtcsessiondescription/chrome":21,"../util":25,"../util/eventtarget":24,"../util/latch":26,"../util/sdp":27,"util":183}],17:[function(require,module,exports){
+},{"../mediastream":4,"../rtcrtpsender":11,"../rtcsessiondescription/chrome":12,"../util":16,"../util/eventtarget":15,"../util/latch":17,"../util/sdp":18,"util":174}],8:[function(require,module,exports){
 /* globals RTCPeerConnection */
 'use strict';
 
@@ -2847,7 +1844,7 @@ function overwriteWithInitiallyNegotiatedDtlsRole(description, dtlsRole) {
 
 module.exports = FirefoxRTCPeerConnection;
 
-},{"../rtcsessiondescription/firefox":22,"../util":25,"../util/eventtarget":24,"../util/sdp":27,"util":183}],18:[function(require,module,exports){
+},{"../rtcsessiondescription/firefox":13,"../util":16,"../util/eventtarget":15,"../util/sdp":18,"util":174}],9:[function(require,module,exports){
 'use strict';
 
 if (typeof RTCPeerConnection === 'function') {
@@ -2872,7 +1869,7 @@ if (typeof RTCPeerConnection === 'function') {
   };
 }
 
-},{"../util":25,"./chrome":16,"./firefox":17,"./safari":19}],19:[function(require,module,exports){
+},{"../util":16,"./chrome":7,"./firefox":8,"./safari":10}],10:[function(require,module,exports){
 /* globals RTCPeerConnection, RTCSessionDescription */
 'use strict';
 
@@ -3263,7 +2260,7 @@ function shimDataChannel(dataChannel) {
 
 module.exports = SafariRTCPeerConnection;
 
-},{"../util":25,"../util/eventtarget":24,"../util/latch":26,"../util/sdp":27,"util":183}],20:[function(require,module,exports){
+},{"../util":16,"../util/eventtarget":15,"../util/latch":17,"../util/sdp":18,"util":174}],11:[function(require,module,exports){
 'use strict';
 
 /**
@@ -3304,7 +2301,7 @@ function RTCRtpSenderShim(track) {
 
 module.exports = RTCRtpSenderShim;
 
-},{}],21:[function(require,module,exports){
+},{}],12:[function(require,module,exports){
 /* globals RTCSessionDescription */
 'use strict';
 
@@ -3345,13 +2342,13 @@ function ChromeRTCSessionDescription(descriptionInitDict) {
 
 module.exports = ChromeRTCSessionDescription;
 
-},{}],22:[function(require,module,exports){
+},{}],13:[function(require,module,exports){
 /* globals RTCSessionDescription */
 'use strict';
 
 module.exports = RTCSessionDescription;
 
-},{}],23:[function(require,module,exports){
+},{}],14:[function(require,module,exports){
 /* globals RTCSessionDescription */
 'use strict';
 
@@ -3374,7 +2371,7 @@ if (typeof RTCSessionDescription === 'function') {
   };
 }
 
-},{"../util":25,"./chrome":21,"./firefox":22}],24:[function(require,module,exports){
+},{"../util":16,"./chrome":12,"./firefox":13}],15:[function(require,module,exports){
 'use strict';
 
 var EventEmitter = require('events').EventEmitter;
@@ -3415,7 +2412,7 @@ EventTarget.prototype.removeEventListener = function removeEventListener() {
 
 module.exports = EventTarget;
 
-},{"events":35}],25:[function(require,module,exports){
+},{"events":26}],16:[function(require,module,exports){
 'use strict';
 
 /**
@@ -3739,7 +2736,7 @@ exports.makeUUID = makeUUID;
 exports.proxyProperties = proxyProperties;
 exports.support = support;
 
-},{}],26:[function(require,module,exports){
+},{}],17:[function(require,module,exports){
 'use strict';
 
 var defer = require('./').defer;
@@ -3854,7 +2851,7 @@ function createUnreachableStateError(from, to) {
 
 module.exports = Latch;
 
-},{"./":25}],27:[function(require,module,exports){
+},{"./":16}],18:[function(require,module,exports){
 /* globals RTCPeerConnection, RTCRtpTransceiver */
 
 'use strict';
@@ -4164,7 +3161,7 @@ exports.getUnifiedPlanSSRCs = getUnifiedPlanSSRCs;
 exports.updatePlanBTrackIdsToSSRCs = updatePlanBTrackIdsToSSRCs;
 exports.updateUnifiedPlanTrackIdsToSSRCs = updateUnifiedPlanTrackIdsToSSRCs;
 
-},{"./":25}],28:[function(require,module,exports){
+},{"./":16}],19:[function(require,module,exports){
 module.exports={
   "name": "@twilio/webrtc",
   "version": "4.4.0",
@@ -4229,7 +3226,7 @@ module.exports={
   }
 }
 
-},{}],29:[function(require,module,exports){
+},{}],20:[function(require,module,exports){
 //      Copyright (c) 2012 Mathieu Turcotte
 //      Licensed under the MIT license.
 
@@ -4262,7 +3259,7 @@ module.exports.call = function(fn, vargs, callback) {
     return new FunctionCall(fn, vargs, callback);
 };
 
-},{"./lib/backoff":30,"./lib/function_call.js":31,"./lib/strategy/exponential":32,"./lib/strategy/fibonacci":33}],30:[function(require,module,exports){
+},{"./lib/backoff":21,"./lib/function_call.js":22,"./lib/strategy/exponential":23,"./lib/strategy/fibonacci":24}],21:[function(require,module,exports){
 //      Copyright (c) 2012 Mathieu Turcotte
 //      Licensed under the MIT license.
 
@@ -4329,7 +3326,7 @@ Backoff.prototype.reset = function() {
 
 module.exports = Backoff;
 
-},{"events":35,"precond":36,"util":183}],31:[function(require,module,exports){
+},{"events":26,"precond":27,"util":174}],22:[function(require,module,exports){
 //      Copyright (c) 2012 Mathieu Turcotte
 //      Licensed under the MIT license.
 
@@ -4521,7 +3518,7 @@ FunctionCall.prototype.handleBackoff_ = function(number, delay, err) {
 
 module.exports = FunctionCall;
 
-},{"./backoff":30,"./strategy/fibonacci":33,"events":35,"precond":36,"util":183}],32:[function(require,module,exports){
+},{"./backoff":21,"./strategy/fibonacci":24,"events":26,"precond":27,"util":174}],23:[function(require,module,exports){
 //      Copyright (c) 2012 Mathieu Turcotte
 //      Licensed under the MIT license.
 
@@ -4564,7 +3561,7 @@ ExponentialBackoffStrategy.prototype.reset_ = function() {
 
 module.exports = ExponentialBackoffStrategy;
 
-},{"./strategy":34,"precond":36,"util":183}],33:[function(require,module,exports){
+},{"./strategy":25,"precond":27,"util":174}],24:[function(require,module,exports){
 //      Copyright (c) 2012 Mathieu Turcotte
 //      Licensed under the MIT license.
 
@@ -4594,7 +3591,7 @@ FibonacciBackoffStrategy.prototype.reset_ = function() {
 
 module.exports = FibonacciBackoffStrategy;
 
-},{"./strategy":34,"util":183}],34:[function(require,module,exports){
+},{"./strategy":25,"util":174}],25:[function(require,module,exports){
 //      Copyright (c) 2012 Mathieu Turcotte
 //      Licensed under the MIT license.
 
@@ -4676,7 +3673,7 @@ BackoffStrategy.prototype.reset_ = function() {
 
 module.exports = BackoffStrategy;
 
-},{"events":35,"util":183}],35:[function(require,module,exports){
+},{"events":26,"util":174}],26:[function(require,module,exports){
 // Copyright Joyent, Inc. and other Node contributors.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -4980,14 +3977,14 @@ function isUndefined(arg) {
   return arg === void 0;
 }
 
-},{}],36:[function(require,module,exports){
+},{}],27:[function(require,module,exports){
 /*
  * Copyright (c) 2012 Mathieu Turcotte
  * Licensed under the MIT license.
  */
 
 module.exports = require('./lib/checks');
-},{"./lib/checks":37}],37:[function(require,module,exports){
+},{"./lib/checks":28}],28:[function(require,module,exports){
 /*
  * Copyright (c) 2012 Mathieu Turcotte
  * Licensed under the MIT license.
@@ -5083,7 +4080,7 @@ module.exports.checkIsBoolean = typeCheck('boolean');
 module.exports.checkIsFunction = typeCheck('function');
 module.exports.checkIsObject = typeCheck('object');
 
-},{"./errors":38,"util":183}],38:[function(require,module,exports){
+},{"./errors":29,"util":174}],29:[function(require,module,exports){
 /*
  * Copyright (c) 2012 Mathieu Turcotte
  * Licensed under the MIT license.
@@ -5109,7 +4106,7 @@ IllegalStateError.prototype.name = 'IllegalStateError';
 
 module.exports.IllegalStateError = IllegalStateError;
 module.exports.IllegalArgumentError = IllegalArgumentError;
-},{"util":183}],39:[function(require,module,exports){
+},{"util":174}],30:[function(require,module,exports){
 // shim for using process in browser
 var process = module.exports = {};
 
@@ -5295,7 +4292,7 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],40:[function(require,module,exports){
+},{}],31:[function(require,module,exports){
 'use strict';
 
 var CancelablePromise = require('./util/cancelablepromise');
@@ -5344,7 +4341,7 @@ function createCancelableRoomPromise(getLocalTracks, createLocalParticipant, cre
 }
 
 module.exports = createCancelableRoomPromise;
-},{"./util/cancelablepromise":149}],41:[function(require,module,exports){
+},{"./util/cancelablepromise":140}],32:[function(require,module,exports){
 'use strict';
 
 var _require = require('@twilio/webrtc'),
@@ -6297,7 +5294,7 @@ function normalizeCodecSettings(nameOrSettings) {
 }
 
 module.exports = connect;
-},{"./cancelableroompromise":40,"./createlocaltracks":43,"./encodingparameters":48,"./localparticipant":51,"./media/track/es5":53,"./networkqualityconfiguration":81,"./room":85,"./signaling/v2":99,"./util":156,"./util/cancelablepromise":149,"./util/constants":150,"./util/eventobserver":154,"./util/log":160,"./util/validate":174,"@twilio/webrtc":12,"@twilio/webrtc/lib/util":25}],42:[function(require,module,exports){
+},{"./cancelableroompromise":31,"./createlocaltracks":34,"./encodingparameters":39,"./localparticipant":42,"./media/track/es5":44,"./networkqualityconfiguration":72,"./room":76,"./signaling/v2":90,"./util":147,"./util/cancelablepromise":140,"./util/constants":141,"./util/eventobserver":145,"./util/log":151,"./util/validate":165,"@twilio/webrtc":3,"@twilio/webrtc/lib/util":16}],33:[function(require,module,exports){
 'use strict';
 
 var defaultCreateLocalTracks = require('./createlocaltracks');
@@ -6425,7 +5422,7 @@ module.exports = {
   audio: createLocalAudioTrack,
   video: createLocalVideoTrack
 };
-},{"./createlocaltracks":43,"./util/constants":150}],43:[function(require,module,exports){
+},{"./createlocaltracks":34,"./util/constants":141}],34:[function(require,module,exports){
 'use strict';
 
 var asLocalTrack = require('./util').asLocalTrack;
@@ -6611,7 +5608,7 @@ function createLocalTracks(options) {
  */
 
 module.exports = createLocalTracks;
-},{"./media/track/es5":53,"./util":156,"./util/constants":150,"./util/log":160,"./webaudio/workaround180748":178,"@twilio/webrtc":12}],44:[function(require,module,exports){
+},{"./media/track/es5":44,"./util":147,"./util/constants":141,"./util/log":151,"./webaudio/workaround180748":169,"@twilio/webrtc":3}],35:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -6701,7 +5698,7 @@ var DataTrackReceiver = function (_DataTrackTransceiver) {
  */
 
 module.exports = DataTrackReceiver;
-},{"./transceiver":46,"./transport":47}],45:[function(require,module,exports){
+},{"./transceiver":37,"./transport":38}],36:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -6862,7 +5859,7 @@ var DataTrackSender = function (_DataTrackTransceiver) {
 }(DataTrackTransceiver);
 
 module.exports = DataTrackSender;
-},{"../util":156,"./transceiver":46}],46:[function(require,module,exports){
+},{"../util":147,"./transceiver":37}],37:[function(require,module,exports){
 'use strict';
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -6921,7 +5918,7 @@ var DataTrackTransceiver = function (_TrackTransceiver) {
 }(TrackTransceiver);
 
 module.exports = DataTrackTransceiver;
-},{"../transceiver":146}],47:[function(require,module,exports){
+},{"../transceiver":137}],38:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -7036,7 +6033,7 @@ var DataTransport = function (_EventEmitter) {
  */
 
 module.exports = DataTransport;
-},{"events":35}],48:[function(require,module,exports){
+},{"events":26}],39:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -7143,7 +6140,7 @@ var EncodingParametersImpl = function (_EventEmitter) {
  */
 
 module.exports = EncodingParametersImpl;
-},{"events":35}],49:[function(require,module,exports){
+},{"events":26}],40:[function(require,module,exports){
 'use strict';
 
 var _require = require('events'),
@@ -7153,7 +6150,7 @@ var _require2 = require('./util'),
     hidePrivateAndCertainPublicPropertiesInClass = _require2.hidePrivateAndCertainPublicPropertiesInClass;
 
 module.exports = hidePrivateAndCertainPublicPropertiesInClass(EventEmitter, ['domain']);
-},{"./util":156,"events":35}],50:[function(require,module,exports){
+},{"./util":147,"events":26}],41:[function(require,module,exports){
 'use strict';
 
 var _require = require('./media/track/es5'),
@@ -7225,7 +6222,7 @@ Object.defineProperties(Video, {
 });
 
 module.exports = Video;
-},{"../package.json":179,"./connect":41,"./createlocaltrack":42,"./createlocaltracks":43,"./media/track/es5":53,"./util/support":170,"./vendor/loglevel":175}],51:[function(require,module,exports){
+},{"../package.json":170,"./connect":32,"./createlocaltrack":33,"./createlocaltracks":34,"./media/track/es5":44,"./util/support":161,"./vendor/loglevel":166}],42:[function(require,module,exports){
 'use strict';
 
 var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
@@ -8021,7 +7018,7 @@ function getTrackPublication(trackPublications, track) {
 }
 
 module.exports = LocalParticipant;
-},{"./media/track/es5":53,"./media/track/localaudiotrackpublication":59,"./media/track/localdatatrackpublication":61,"./media/track/localvideotrackpublication":65,"./participant":82,"./util":156,"./util/constants":150,"./util/validate":174,"@twilio/webrtc":12}],52:[function(require,module,exports){
+},{"./media/track/es5":44,"./media/track/localaudiotrackpublication":50,"./media/track/localdatatrackpublication":52,"./media/track/localvideotrackpublication":56,"./participant":73,"./util":147,"./util/constants":141,"./util/validate":165,"@twilio/webrtc":3}],43:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -8204,7 +7201,7 @@ var AudioTrack = function (_MediaTrack) {
  */
 
 module.exports = AudioTrack;
-},{"./mediatrack":66}],53:[function(require,module,exports){
+},{"./mediatrack":57}],44:[function(require,module,exports){
 'use strict';
 
 module.exports = {
@@ -8212,7 +7209,7 @@ module.exports = {
   LocalVideoTrack: require('./localvideotrack'),
   LocalDataTrack: require('./localdatatrack')
 };
-},{"./localaudiotrack":54,"./localdatatrack":55,"./localvideotrack":56}],54:[function(require,module,exports){
+},{"./localaudiotrack":45,"./localdatatrack":46,"./localvideotrack":47}],45:[function(require,module,exports){
 // eslint-disable-next-line no-warning-comments
 // TODO(mroberts): Remove this when we go to the next major version. This is
 // only in place so that we can support ES6 classes without requiring `new`.
@@ -8232,7 +7229,7 @@ function LocalAudioTrack(mediaStreamTrack, options) {
 inherits(LocalAudioTrack, LocalAudioTrackClass);
 
 module.exports = LocalAudioTrack;
-},{"../localaudiotrack":58,"util":183}],55:[function(require,module,exports){
+},{"../localaudiotrack":49,"util":174}],46:[function(require,module,exports){
 // eslint-disable-next-line no-warning-comments
 // TODO(mroberts): Remove this when we go to the next major version. This is
 // only in place so that we can support ES6 classes without requiring `new`.
@@ -8252,7 +7249,7 @@ function LocalDataTrack(options) {
 inherits(LocalDataTrack, LocalDataTrackClass);
 
 module.exports = LocalDataTrack;
-},{"../localdatatrack":60,"util":183}],56:[function(require,module,exports){
+},{"../localdatatrack":51,"util":174}],47:[function(require,module,exports){
 // eslint-disable-next-line no-warning-comments
 // TODO(mroberts): Remove this when we go to the next major version. This is
 // only in place so that we can support ES6 classes without requiring `new`.
@@ -8272,7 +7269,7 @@ function LocalVideoTrack(mediaStreamTrack, options) {
 inherits(LocalVideoTrack, LocalVideoTrackClass);
 
 module.exports = LocalVideoTrack;
-},{"../localvideotrack":64,"util":183}],57:[function(require,module,exports){
+},{"../localvideotrack":55,"util":174}],48:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -8402,7 +7399,7 @@ var Track = function (_EventEmitter) {
  */
 
 module.exports = Track;
-},{"../../eventemitter":49,"../../util":156,"../../util/constants":150,"../../util/log":160}],58:[function(require,module,exports){
+},{"../../eventemitter":40,"../../util":147,"../../util/constants":141,"../../util/log":151}],49:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -8592,7 +7589,7 @@ var LocalAudioTrack = function (_LocalMediaAudioTrack) {
  */
 
 module.exports = LocalAudioTrack;
-},{"./audiotrack":52,"./localmediatrack":62}],59:[function(require,module,exports){
+},{"./audiotrack":43,"./localmediatrack":53}],50:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -8642,7 +7639,7 @@ var LocalAudioTrackPublication = function (_LocalTrackPublicatio) {
 }(LocalTrackPublication);
 
 module.exports = LocalAudioTrackPublication;
-},{"./localtrackpublication":63}],60:[function(require,module,exports){
+},{"./localtrackpublication":54}],51:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -8788,7 +7785,7 @@ var LocalDataTrack = function (_Track) {
  */
 
 module.exports = LocalDataTrack;
-},{"../../data/sender":45,"./":57}],61:[function(require,module,exports){
+},{"../../data/sender":36,"./":48}],52:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -8838,7 +7835,7 @@ var LocalDataTrackPublication = function (_LocalTrackPublicatio) {
 }(LocalTrackPublication);
 
 module.exports = LocalDataTrackPublication;
-},{"./localtrackpublication":63}],62:[function(require,module,exports){
+},{"./localtrackpublication":54}],53:[function(require,module,exports){
 /* eslint new-cap:0 */
 'use strict';
 
@@ -9278,7 +8275,7 @@ function restartWhenInadvertentlyStopped(localMediaTrack) {
 }
 
 module.exports = mixinLocalMediaTrack;
-},{"../../util":156,"../../util/constants":150,"../../util/detectsilentaudio":151,"../../util/detectsilentvideo":152,"../../util/documentvisibilitymonitor.js":153,"../../util/localmediarestartdeferreds":159,"../../webaudio/workaround180748":178,"./sender":76,"@twilio/webrtc":12,"@twilio/webrtc/lib/util":25}],63:[function(require,module,exports){
+},{"../../util":147,"../../util/constants":141,"../../util/detectsilentaudio":142,"../../util/detectsilentvideo":143,"../../util/documentvisibilitymonitor.js":144,"../../util/localmediarestartdeferreds":150,"../../webaudio/workaround180748":169,"./sender":67,"@twilio/webrtc":3,"@twilio/webrtc/lib/util":16}],54:[function(require,module,exports){
 /* eslint new-cap:0 */
 'use strict';
 
@@ -9410,7 +8407,7 @@ var LocalTrackPublication = function (_TrackPublication) {
 }(TrackPublication);
 
 module.exports = LocalTrackPublication;
-},{"../../util/constants":150,"./trackpublication":77}],64:[function(require,module,exports){
+},{"../../util/constants":141,"./trackpublication":68}],55:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -9830,7 +8827,7 @@ function workaroundSilentLocalVideo(localVideoTrack, doc) {
  */
 
 module.exports = LocalVideoTrack;
-},{"../../util/detectsilentvideo":152,"./localmediatrack":62,"./videotrack":80,"@twilio/webrtc/lib/util":25}],65:[function(require,module,exports){
+},{"../../util/detectsilentvideo":143,"./localmediatrack":53,"./videotrack":71,"@twilio/webrtc/lib/util":16}],56:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -9880,7 +8877,7 @@ var LocalVideoTrackPublication = function (_LocalTrackPublicatio) {
 }(LocalTrackPublication);
 
 module.exports = LocalVideoTrackPublication;
-},{"./localtrackpublication":63}],66:[function(require,module,exports){
+},{"./localtrackpublication":54}],57:[function(require,module,exports){
 'use strict';
 
 var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
@@ -10326,7 +9323,7 @@ function shimMediaElement(el) {
 }
 
 module.exports = MediaTrack;
-},{"../../util":156,"../../util/localmediarestartdeferreds":159,"./":57,"@twilio/webrtc":12,"@twilio/webrtc/lib/util":25}],67:[function(require,module,exports){
+},{"../../util":147,"../../util/localmediarestartdeferreds":150,"./":48,"@twilio/webrtc":3,"@twilio/webrtc/lib/util":16}],58:[function(require,module,exports){
 'use strict';
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -10360,7 +9357,7 @@ var MediaTrackReceiver = function (_MediaTrackTransceive) {
 }(MediaTrackTransceiver);
 
 module.exports = MediaTrackReceiver;
-},{"./transceiver":78}],68:[function(require,module,exports){
+},{"./transceiver":69}],59:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -10473,7 +9470,7 @@ var RemoteAudioTrack = function (_RemoteMediaAudioTrac) {
  */
 
 module.exports = RemoteAudioTrack;
-},{"./audiotrack":52,"./remotemediatrack":72}],69:[function(require,module,exports){
+},{"./audiotrack":43,"./remotemediatrack":63}],60:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -10554,7 +9551,7 @@ var RemoteAudioTrackPublication = function (_RemoteTrackPublicati) {
  */
 
 module.exports = RemoteAudioTrackPublication;
-},{"./remotetrackpublication":73}],70:[function(require,module,exports){
+},{"./remotetrackpublication":64}],61:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -10745,7 +9742,7 @@ var RemoteDataTrack = function (_Track) {
  */
 
 module.exports = RemoteDataTrack;
-},{"../../util/constants":150,"./":57}],71:[function(require,module,exports){
+},{"../../util/constants":141,"./":48}],62:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -10814,7 +9811,7 @@ var RemoteDataTrackPublication = function (_RemoteTrackPublicati) {
  */
 
 module.exports = RemoteDataTrackPublication;
-},{"./remotetrackpublication":73}],72:[function(require,module,exports){
+},{"./remotetrackpublication":64}],63:[function(require,module,exports){
 'use strict';
 
 var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
@@ -11114,7 +10111,7 @@ function playIfPausedWhileInBackground(remoteMediaTrack) {
  */
 
 module.exports = mixinRemoteMediaTrack;
-},{"../../util/constants":150,"../../util/documentvisibilitymonitor.js":153,"@twilio/webrtc/lib/util":25}],73:[function(require,module,exports){
+},{"../../util/constants":141,"../../util/documentvisibilitymonitor.js":144,"@twilio/webrtc/lib/util":16}],64:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -11336,7 +10333,7 @@ var RemoteTrackPublication = function (_TrackPublication) {
  */
 
 module.exports = RemoteTrackPublication;
-},{"./trackpublication":77}],74:[function(require,module,exports){
+},{"./trackpublication":68}],65:[function(require,module,exports){
 'use strict';
 
 var _slicedToArray = function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i["return"]) _i["return"](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError("Invalid attempt to destructure non-iterable instance"); } }; }();
@@ -11761,7 +10758,7 @@ function maybeUpdateRenderHints(removeVideoTrack) {
  */
 
 module.exports = RemoteVideoTrack;
-},{"../../util/documentvisibilitymonitor.js":153,"../../util/nullobserver.js":163,"./remotemediatrack":72,"./videotrack":80}],75:[function(require,module,exports){
+},{"../../util/documentvisibilitymonitor.js":144,"../../util/nullobserver.js":154,"./remotemediatrack":63,"./videotrack":71}],66:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -11842,7 +10839,7 @@ var RemoteVideoTrackPublication = function (_RemoteTrackPublicati) {
  */
 
 module.exports = RemoteVideoTrackPublication;
-},{"./remotetrackpublication":73}],76:[function(require,module,exports){
+},{"./remotetrackpublication":64}],67:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -11967,7 +10964,7 @@ var MediaTrackSender = function (_MediaTrackTransceive) {
 }(MediaTrackTransceiver);
 
 module.exports = MediaTrackSender;
-},{"./transceiver":78}],77:[function(require,module,exports){
+},{"./transceiver":69}],68:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -12085,7 +11082,7 @@ var TrackPublication = function (_EventEmitter) {
  */
 
 module.exports = TrackPublication;
-},{"../../eventemitter":49,"../../util":156,"../../util/constants":150,"../../util/log":160}],78:[function(require,module,exports){
+},{"../../eventemitter":40,"../../util":147,"../../util/constants":141,"../../util/log":151}],69:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -12159,7 +11156,7 @@ var MediaTrackTransceiver = function (_TrackTransceiver) {
 }(TrackTransceiver);
 
 module.exports = MediaTrackTransceiver;
-},{"../../transceiver":146}],79:[function(require,module,exports){
+},{"../../transceiver":137}],70:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -12353,7 +11350,7 @@ var VideoProcessorEventObserver = function (_EventEmitter) {
 }(EventEmitter);
 
 module.exports = VideoProcessorEventObserver;
-},{"../../util/constants":150,"events":35}],80:[function(require,module,exports){
+},{"../../util/constants":141,"events":26}],71:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -12961,7 +11958,7 @@ function dimensionsChanged(track, elem) {
  */
 
 module.exports = VideoTrack;
-},{"../../util/constants":150,"./mediatrack":66,"./videoprocessoreventobserver":79}],81:[function(require,module,exports){
+},{"../../util/constants":141,"./mediatrack":57,"./videoprocessoreventobserver":70}],72:[function(require,module,exports){
 'use strict';
 
 var _slicedToArray = function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i["return"]) _i["return"](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError("Invalid attempt to destructure non-iterable instance"); } }; }();
@@ -13058,7 +12055,7 @@ var NetworkQualityConfigurationImpl = function (_EventEmitter) {
 }(EventEmitter);
 
 module.exports = NetworkQualityConfigurationImpl;
-},{"./util":156,"./util/constants":150,"events":35}],82:[function(require,module,exports){
+},{"./util":147,"./util/constants":141,"events":26}],73:[function(require,module,exports){
 'use strict';
 
 var _slicedToArray = function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i["return"]) _i["return"](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError("Invalid attempt to destructure non-iterable instance"); } }; }();
@@ -13775,7 +12772,7 @@ function reemitTrackPublicationEvents(participant, publication) {
 }
 
 module.exports = Participant;
-},{"./eventemitter":49,"./media/track/remoteaudiotrack":68,"./media/track/remoteaudiotrackpublication":69,"./media/track/remotedatatrack":70,"./media/track/remotedatatrackpublication":71,"./media/track/remotevideotrack":74,"./media/track/remotevideotrackpublication":75,"./util":156}],83:[function(require,module,exports){
+},{"./eventemitter":40,"./media/track/remoteaudiotrack":59,"./media/track/remoteaudiotrackpublication":60,"./media/track/remotedatatrack":61,"./media/track/remotedatatrackpublication":62,"./media/track/remotevideotrack":65,"./media/track/remotevideotrackpublication":66,"./util":147}],74:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -13871,7 +12868,7 @@ var QueueingEventEmitter = function (_EventEmitter) {
 }(EventEmitter);
 
 module.exports = QueueingEventEmitter;
-},{"events":35}],84:[function(require,module,exports){
+},{"events":26}],75:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -14173,7 +13170,7 @@ var RemoteParticipant = function (_Participant) {
  */
 
 module.exports = RemoteParticipant;
-},{"./participant":82}],85:[function(require,module,exports){
+},{"./participant":73}],76:[function(require,module,exports){
 'use strict';
 
 var _slicedToArray = function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i["return"]) _i["return"](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError("Invalid attempt to destructure non-iterable instance"); } }; }();
@@ -14765,7 +13762,7 @@ function handleSignalingEvents(room, signaling) {
 }
 
 module.exports = Room;
-},{"./eventemitter":49,"./remoteparticipant":84,"./stats/statsreport":143,"./util":156}],86:[function(require,module,exports){
+},{"./eventemitter":40,"./remoteparticipant":75,"./stats/statsreport":134,"./util":147}],77:[function(require,module,exports){
 /* eslint consistent-return:0 */
 'use strict';
 
@@ -14958,7 +13955,7 @@ var Signaling = function (_StateMachine) {
 }(StateMachine);
 
 module.exports = Signaling;
-},{"../statemachine":115,"./participant":89,"./room":93}],87:[function(require,module,exports){
+},{"../statemachine":106,"./participant":80,"./room":84}],78:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -15058,7 +14055,7 @@ var LocalParticipantSignaling = function (_ParticipantSignaling) {
 }(ParticipantSignaling);
 
 module.exports = LocalParticipantSignaling;
-},{"./participant":89}],88:[function(require,module,exports){
+},{"./participant":80}],79:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -15217,7 +14214,7 @@ function setError(publication, error) {
 }
 
 module.exports = LocalTrackPublicationSignaling;
-},{"./track":94}],89:[function(require,module,exports){
+},{"./track":85}],80:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -15463,7 +14460,7 @@ var ParticipantSignaling = function (_StateMachine) {
  */
 
 module.exports = ParticipantSignaling;
-},{"../statemachine":115,"../stats/networkqualitystats":130}],90:[function(require,module,exports){
+},{"../statemachine":106,"../stats/networkqualitystats":121}],81:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -15548,7 +14545,7 @@ var RecordingSignaling = function (_EventEmitter) {
  */
 
 module.exports = RecordingSignaling;
-},{"events":35}],91:[function(require,module,exports){
+},{"events":26}],82:[function(require,module,exports){
 'use strict';
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -15587,7 +14584,7 @@ var RemoteParticipantSignaling = function (_ParticipantSignaling) {
 }(ParticipantSignaling);
 
 module.exports = RemoteParticipantSignaling;
-},{"./participant":89}],92:[function(require,module,exports){
+},{"./participant":80}],83:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -15707,7 +14704,7 @@ var RemoteTrackPublicationSignaling = function (_TrackSignaling) {
 }(TrackSignaling);
 
 module.exports = RemoteTrackPublicationSignaling;
-},{"./track":94}],93:[function(require,module,exports){
+},{"./track":85}],84:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -16037,7 +15034,7 @@ function maybeUpdateState(roomSignaling) {
 }
 
 module.exports = RoomSignaling;
-},{"../statemachine":115,"../util":156,"../util/constants":150,"../util/log":160,"../util/timeout":171,"../util/twilio-video-errors":172,"./recording":90}],94:[function(require,module,exports){
+},{"../statemachine":106,"../util":147,"../util/constants":141,"../util/log":151,"../util/timeout":162,"../util/twilio-video-errors":163,"./recording":81}],85:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -16242,7 +15239,7 @@ var TrackSignaling = function (_EventEmitter) {
  */
 
 module.exports = TrackSignaling;
-},{"events":35}],95:[function(require,module,exports){
+},{"events":26}],86:[function(require,module,exports){
 'use strict';
 
 var CancelablePromise = require('../../util/cancelablepromise');
@@ -16413,7 +15410,7 @@ function createCancelableRoomSignalingPromise(token, wsServer, localParticipant,
 }
 
 module.exports = createCancelableRoomSignalingPromise;
-},{"../../util":156,"../../util/cancelablepromise":149,"../../util/twilio-video-errors":172,"./peerconnectionmanager":106,"./room":111,"./twilioconnectiontransport":114}],96:[function(require,module,exports){
+},{"../../util":147,"../../util/cancelablepromise":140,"../../util/twilio-video-errors":163,"./peerconnectionmanager":97,"./room":102,"./twilioconnectiontransport":105}],87:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -16500,7 +15497,7 @@ var DominantSpeakerSignaling = function (_MediaSignaling) {
  */
 
 module.exports = DominantSpeakerSignaling;
-},{"./mediasignaling":102}],97:[function(require,module,exports){
+},{"./mediasignaling":93}],88:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -16586,7 +15583,7 @@ var IceBox = function () {
 }();
 
 module.exports = IceBox;
-},{"../../util/filter":155}],98:[function(require,module,exports){
+},{"../../util/filter":146}],89:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -16768,7 +15765,7 @@ var IceConnectionMonitor = function () {
 }();
 
 module.exports = IceConnectionMonitor;
-},{"../../util/constants":150}],99:[function(require,module,exports){
+},{"../../util/constants":141}],90:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -16842,7 +15839,7 @@ var SignalingV2 = function (_Signaling) {
 }(Signaling);
 
 module.exports = SignalingV2;
-},{"../":86,"./cancelableroomsignalingpromise":95,"./localparticipant":100}],100:[function(require,module,exports){
+},{"../":77,"./cancelableroomsignalingpromise":86,"./localparticipant":91}],91:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -17199,7 +16196,7 @@ var LocalParticipantV2 = function (_LocalParticipantSign) {
  */
 
 module.exports = LocalParticipantV2;
-},{"../../util":156,"../localparticipant":87,"./localtrackpublication":101}],101:[function(require,module,exports){
+},{"../../util":147,"../localparticipant":78,"./localtrackpublication":92}],92:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -17294,7 +16291,7 @@ var LocalTrackPublicationV2 = function (_LocalTrackPublicatio) {
  */
 
 module.exports = LocalTrackPublicationV2;
-},{"../../util/twilio-video-errors":172,"../localtrackpublication":88}],102:[function(require,module,exports){
+},{"../../util/twilio-video-errors":163,"../localtrackpublication":79}],93:[function(require,module,exports){
 /* eslint callback-return:0 */
 'use strict';
 
@@ -17403,7 +16400,7 @@ var MediaSignaling = function (_EventEmitter) {
 }(EventEmitter);
 
 module.exports = MediaSignaling;
-},{"events":35}],103:[function(require,module,exports){
+},{"events":26}],94:[function(require,module,exports){
 /* eslint callback-return:0 */
 'use strict';
 
@@ -17581,7 +16578,7 @@ function next(monitor) {
  */
 
 module.exports = NetworkQualityMonitor;
-},{"../../stats/peerconnectionreportfactory":133,"events":35}],104:[function(require,module,exports){
+},{"../../stats/peerconnectionreportfactory":124,"events":26}],95:[function(require,module,exports){
 'use strict';
 
 var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
@@ -17860,7 +16857,7 @@ function createNetworkQualityInputsMessage(networkQualityInputs, networkQualityR
 }
 
 module.exports = NetworkQualitySignaling;
-},{"../../util/asyncvar":148,"./mediasignaling":102}],105:[function(require,module,exports){
+},{"../../util/asyncvar":139,"./mediasignaling":93}],96:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -19829,7 +18826,7 @@ function setMaxBitrate(params, maxBitrate) {
   }
 }
 module.exports = PeerConnectionV2;
-},{"../../data/receiver":44,"../../media/track/receiver":67,"../../statemachine":115,"../../util":156,"../../util/constants":150,"../../util/log":160,"../../util/sdp":164,"../../util/sdp/issue8329":165,"../../util/sdp/trackmatcher/identity":167,"../../util/sdp/trackmatcher/mid":168,"../../util/sdp/trackmatcher/ordered":169,"../../util/timeout":171,"../../util/twilio-video-errors":172,"./icebox":97,"./iceconnectionmonitor.js":98,"@twilio/webrtc":12,"@twilio/webrtc/lib/util":25,"@twilio/webrtc/lib/util/sdp":27,"backoff":29}],106:[function(require,module,exports){
+},{"../../data/receiver":35,"../../media/track/receiver":58,"../../statemachine":106,"../../util":147,"../../util/constants":141,"../../util/log":151,"../../util/sdp":155,"../../util/sdp/issue8329":156,"../../util/sdp/trackmatcher/identity":158,"../../util/sdp/trackmatcher/mid":159,"../../util/sdp/trackmatcher/ordered":160,"../../util/timeout":162,"../../util/twilio-video-errors":163,"./icebox":88,"./iceconnectionmonitor.js":89,"@twilio/webrtc":3,"@twilio/webrtc/lib/util":16,"@twilio/webrtc/lib/util/sdp":18,"backoff":20}],97:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -20470,7 +19467,7 @@ function updateConnectionState(pcm) {
 }
 
 module.exports = PeerConnectionManager;
-},{"../../media/track/sender":76,"../../queueingeventemitter":83,"../../util":156,"../../util/twilio-video-errors":172,"../../webaudio/audiocontext":176,"./peerconnection":105,"@twilio/webrtc/lib/util":25}],107:[function(require,module,exports){
+},{"../../media/track/sender":67,"../../queueingeventemitter":74,"../../util":147,"../../util/twilio-video-errors":163,"../../webaudio/audiocontext":167,"./peerconnection":96,"@twilio/webrtc/lib/util":16}],98:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -20538,7 +19535,7 @@ var RecordingV2 = function (_RecordingSignaling) {
  */
 
 module.exports = RecordingV2;
-},{"../recording":90}],108:[function(require,module,exports){
+},{"../recording":81}],99:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -20685,7 +19682,7 @@ var RemoteParticipantV2 = function (_RemoteParticipantSig) {
 }(RemoteParticipantSignaling);
 
 module.exports = RemoteParticipantV2;
-},{"../remoteparticipant":91,"./remotetrackpublication":109}],109:[function(require,module,exports){
+},{"../remoteparticipant":82,"./remotetrackpublication":100}],100:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -20746,7 +19743,7 @@ var RemoteTrackPublicationV2 = function (_RemoteTrackPublicati) {
  */
 
 module.exports = RemoteTrackPublicationV2;
-},{"../remotetrackpublication":92}],110:[function(require,module,exports){
+},{"../remotetrackpublication":83}],101:[function(require,module,exports){
 /* eslint callback-return:0 */
 'use strict';
 
@@ -20900,7 +19897,7 @@ var RenderHintsSignaling = function (_MediaSignaling) {
 }(MediaSignaling);
 
 module.exports = RenderHintsSignaling;
-},{"../../util":156,"./mediasignaling":102}],111:[function(require,module,exports){
+},{"../../util":147,"./mediasignaling":93}],102:[function(require,module,exports){
 'use strict';
 
 var _slicedToArray = function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i["return"]) _i["return"](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError("Invalid attempt to destructure non-iterable instance"); } }; }();
@@ -21870,7 +20867,7 @@ function replaceNullsWithDefaults(activeIceCandidatePair, peerConnectionId) {
 }
 
 module.exports = RoomV2;
-},{"../../stats/statsreport":143,"../../util":156,"../../util/movingaveragedelta":161,"../../util/twilio-video-errors":172,"../room":93,"./dominantspeakersignaling":96,"./networkqualitymonitor":103,"./networkqualitysignaling":104,"./recording":107,"./remoteparticipant":108,"./renderhintssignaling":110,"./trackprioritysignaling":112,"./trackswitchoffsignaling":113}],112:[function(require,module,exports){
+},{"../../stats/statsreport":134,"../../util":147,"../../util/movingaveragedelta":152,"../../util/twilio-video-errors":163,"../room":84,"./dominantspeakersignaling":87,"./networkqualitymonitor":94,"./networkqualitysignaling":95,"./recording":98,"./remoteparticipant":99,"./renderhintssignaling":101,"./trackprioritysignaling":103,"./trackswitchoffsignaling":104}],103:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -21943,7 +20940,7 @@ var TrackPrioritySignaling = function (_MediaSignaling) {
 }(MediaSignaling);
 
 module.exports = TrackPrioritySignaling;
-},{"./mediasignaling":102}],113:[function(require,module,exports){
+},{"./mediasignaling":93}],104:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -22009,7 +21006,7 @@ var TrackSwitchOffSignaling = function (_MediaSignaling) {
  */
 
 module.exports = TrackSwitchOffSignaling;
-},{"./mediasignaling":102}],114:[function(require,module,exports){
+},{"./mediasignaling":93}],105:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -22700,7 +21697,7 @@ function setupTransport(transport) {
 }
 
 module.exports = TwilioConnectionTransport;
-},{"../../../package.json":179,"../../statemachine":115,"../../twilioconnection":147,"../../util":156,"../../util/constants":150,"../../util/insightspublisher":157,"../../util/insightspublisher/null":158,"../../util/timeout":171,"../../util/twilio-video-errors":172,"@twilio/webrtc/lib/util/sdp":27,"backoff":29}],115:[function(require,module,exports){
+},{"../../../package.json":170,"../../statemachine":106,"../../twilioconnection":138,"../../util":147,"../../util/constants":141,"../../util/insightspublisher":148,"../../util/insightspublisher/null":149,"../../util/timeout":162,"../../util/twilio-video-errors":163,"@twilio/webrtc/lib/util/sdp":18,"backoff":20}],106:[function(require,module,exports){
 'use strict';
 
 var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
@@ -23202,7 +22199,7 @@ function createUnreachableError(here, there) {
 }
 
 module.exports = StateMachine;
-},{"./util":156,"events":35}],116:[function(require,module,exports){
+},{"./util":147,"events":26}],107:[function(require,module,exports){
 /* eslint no-undefined:0 */
 'use strict';
 
@@ -23221,7 +22218,7 @@ function average(xs) {
 }
 
 module.exports = average;
-},{}],117:[function(require,module,exports){
+},{}],108:[function(require,module,exports){
 'use strict';
 
 /**
@@ -23292,7 +22289,7 @@ var IceReport = function () {
 }();
 
 module.exports = IceReport;
-},{}],118:[function(require,module,exports){
+},{}],109:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -23351,7 +22348,7 @@ var IceReportFactory = function () {
 }();
 
 module.exports = IceReportFactory;
-},{"./icereport":117}],119:[function(require,module,exports){
+},{"./icereport":108}],110:[function(require,module,exports){
 'use strict';
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -23405,7 +22402,7 @@ var LocalAudioTrackStats = function (_LocalTrackStats) {
  */
 
 module.exports = LocalAudioTrackStats;
-},{"./localtrackstats":120}],120:[function(require,module,exports){
+},{"./localtrackstats":111}],111:[function(require,module,exports){
 'use strict';
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -23458,7 +22455,7 @@ var LocalTrackStats = function (_TrackStats) {
 }(TrackStats);
 
 module.exports = LocalTrackStats;
-},{"./trackstats":145}],121:[function(require,module,exports){
+},{"./trackstats":136}],112:[function(require,module,exports){
 'use strict';
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -23548,7 +22545,7 @@ var LocalVideoTrackStats = function (_LocalTrackStats) {
 }(LocalTrackStats);
 
 module.exports = LocalVideoTrackStats;
-},{"./localtrackstats":120}],122:[function(require,module,exports){
+},{"./localtrackstats":111}],113:[function(require,module,exports){
 'use strict';
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -23580,7 +22577,7 @@ var NetworkQualityAudioStats = function (_NetworkQualityMediaS) {
 }(NetworkQualityMediaStats);
 
 module.exports = NetworkQualityAudioStats;
-},{"./networkqualitymediastats":126}],123:[function(require,module,exports){
+},{"./networkqualitymediastats":117}],114:[function(require,module,exports){
 'use strict';
 
 /**
@@ -23624,7 +22621,7 @@ function NetworkQualityBandwidthStats(_ref) {
 };
 
 module.exports = NetworkQualityBandwidthStats;
-},{}],124:[function(require,module,exports){
+},{}],115:[function(require,module,exports){
 'use strict';
 
 /**
@@ -23661,7 +22658,7 @@ function NetworkQualityFractionLostStats(_ref) {
 };
 
 module.exports = NetworkQualityFractionLostStats;
-},{}],125:[function(require,module,exports){
+},{}],116:[function(require,module,exports){
 'use strict';
 
 /**
@@ -23705,7 +22702,7 @@ function NetworkQualityLatencyStats(_ref) {
 };
 
 module.exports = NetworkQualityLatencyStats;
-},{}],126:[function(require,module,exports){
+},{}],117:[function(require,module,exports){
 'use strict';
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -23763,7 +22760,7 @@ function NetworkQualityMediaStats(_ref) {
 };
 
 module.exports = NetworkQualityMediaStats;
-},{"./networkqualityrecvstats":127,"./networkqualitysendstats":129}],127:[function(require,module,exports){
+},{"./networkqualityrecvstats":118,"./networkqualitysendstats":120}],118:[function(require,module,exports){
 'use strict';
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -23796,7 +22793,7 @@ var NetworkQualityRecvStats = function (_NetworkQualitySendOr) {
 }(NetworkQualitySendOrRecvStats);
 
 module.exports = NetworkQualityRecvStats;
-},{"./networkqualitysendorrecvstats":128}],128:[function(require,module,exports){
+},{"./networkqualitysendorrecvstats":119}],119:[function(require,module,exports){
 'use strict';
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -23847,7 +22844,7 @@ function NetworkQualitySendOrRecvStats(_ref) {
 };
 
 module.exports = NetworkQualitySendOrRecvStats;
-},{"./networkqualitybandwidthstats":123,"./networkqualityfractionloststats":124,"./networkqualitylatencystats":125}],129:[function(require,module,exports){
+},{"./networkqualitybandwidthstats":114,"./networkqualityfractionloststats":115,"./networkqualitylatencystats":116}],120:[function(require,module,exports){
 'use strict';
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -23880,7 +22877,7 @@ var NetworkQualitySendStats = function (_NetworkQualitySendOr) {
 }(NetworkQualitySendOrRecvStats);
 
 module.exports = NetworkQualitySendStats;
-},{"./networkqualitysendorrecvstats":128}],130:[function(require,module,exports){
+},{"./networkqualitysendorrecvstats":119}],121:[function(require,module,exports){
 'use strict';
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -23928,7 +22925,7 @@ function NetworkQualityStats(_ref) {
 };
 
 module.exports = NetworkQualityStats;
-},{"./networkqualityaudiostats":122,"./networkqualityvideostats":131}],131:[function(require,module,exports){
+},{"./networkqualityaudiostats":113,"./networkqualityvideostats":122}],122:[function(require,module,exports){
 'use strict';
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -23960,7 +22957,7 @@ var NetworkQualityVideoStats = function (_NetworkQualityMediaS) {
 }(NetworkQualityMediaStats);
 
 module.exports = NetworkQualityVideoStats;
-},{"./networkqualitymediastats":126}],132:[function(require,module,exports){
+},{"./networkqualitymediastats":117}],123:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -24059,7 +23056,7 @@ var PeerConnectionReport = function () {
 }();
 
 module.exports = PeerConnectionReport;
-},{"./receiverreport":134,"./senderreport":141}],133:[function(require,module,exports){
+},{"./receiverreport":125,"./senderreport":132}],124:[function(require,module,exports){
 'use strict';
 
 var _slicedToArray = function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i["return"]) _i["return"](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError("Invalid attempt to destructure non-iterable instance"); } }; }();
@@ -24590,7 +23587,7 @@ function updateChrome(factory) {
 }
 
 module.exports = PeerConnectionReportFactory;
-},{"./icereportfactory":118,"./peerconnectionreport":132,"./receiverreportfactory":135,"./senderreportfactory":142,"@twilio/webrtc/lib/util":25}],134:[function(require,module,exports){
+},{"./icereportfactory":109,"./peerconnectionreport":123,"./receiverreportfactory":126,"./senderreportfactory":133,"@twilio/webrtc/lib/util":16}],125:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -24738,7 +23735,7 @@ var ReceiverReport = function (_SenderOrReceiverRepo) {
 }(SenderOrReceiverReport);
 
 module.exports = ReceiverReport;
-},{"./average":116,"./senderorreceiverreport":139,"./sum":144}],135:[function(require,module,exports){
+},{"./average":107,"./senderorreceiverreport":130,"./sum":135}],126:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -24804,7 +23801,7 @@ var ReceiverReportFactory = function (_SenderOrReceiverRepo) {
 }(SenderOrReceiverReportFactory);
 
 module.exports = ReceiverReportFactory;
-},{"./receiverreport":134,"./senderorreceiverreportfactory":140}],136:[function(require,module,exports){
+},{"./receiverreport":125,"./senderorreceiverreportfactory":131}],127:[function(require,module,exports){
 'use strict';
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -24851,7 +23848,7 @@ var RemoteAudioTrackStats = function (_RemoteTrackStats) {
 }(RemoteTrackStats);
 
 module.exports = RemoteAudioTrackStats;
-},{"./remotetrackstats":137}],137:[function(require,module,exports){
+},{"./remotetrackstats":128}],128:[function(require,module,exports){
 'use strict';
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -24898,7 +23895,7 @@ var RemoteTrackStats = function (_TrackStats) {
 }(TrackStats);
 
 module.exports = RemoteTrackStats;
-},{"./trackstats":145}],138:[function(require,module,exports){
+},{"./trackstats":136}],129:[function(require,module,exports){
 'use strict';
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -24961,7 +23958,7 @@ var RemoteVideoTrackStats = function (_RemoteTrackStats) {
 }(RemoteTrackStats);
 
 module.exports = RemoteVideoTrackStats;
-},{"./remotetrackstats":137}],139:[function(require,module,exports){
+},{"./remotetrackstats":128}],130:[function(require,module,exports){
 'use strict';
 
 /**
@@ -24999,7 +23996,7 @@ function SenderOrReceiverReport(id, trackId, bitrate) {
 };
 
 module.exports = SenderOrReceiverReport;
-},{}],140:[function(require,module,exports){
+},{}],131:[function(require,module,exports){
 'use strict';
 
 /**
@@ -25039,7 +24036,7 @@ function SenderOrReceiverReportFactory(id, trackId, initialStats) {
 };
 
 module.exports = SenderOrReceiverReportFactory;
-},{}],141:[function(require,module,exports){
+},{}],132:[function(require,module,exports){
 /* eslint no-undefined:0 */
 'use strict';
 
@@ -25139,7 +24136,7 @@ var SenderReport = function (_SenderOrReceiverRepo) {
 }(SenderOrReceiverReport);
 
 module.exports = SenderReport;
-},{"./average":116,"./senderorreceiverreport":139,"./sum":144}],142:[function(require,module,exports){
+},{"./average":107,"./senderorreceiverreport":130,"./sum":135}],133:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -25205,7 +24202,7 @@ var SenderReportFactory = function (_SenderOrReceiverRepo) {
 }(SenderOrReceiverReportFactory);
 
 module.exports = SenderReportFactory;
-},{"./senderorreceiverreportfactory":140,"./senderreport":141}],143:[function(require,module,exports){
+},{"./senderorreceiverreportfactory":131,"./senderreport":132}],134:[function(require,module,exports){
 'use strict';
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
@@ -25270,7 +24267,7 @@ function StatsReport(peerConnectionId, statsResponse, prepareForInsights) {
 };
 
 module.exports = StatsReport;
-},{"./localaudiotrackstats":119,"./localvideotrackstats":121,"./remoteaudiotrackstats":136,"./remotevideotrackstats":138}],144:[function(require,module,exports){
+},{"./localaudiotrackstats":110,"./localvideotrackstats":112,"./remoteaudiotrackstats":127,"./remotevideotrackstats":129}],135:[function(require,module,exports){
 'use strict';
 
 /**
@@ -25285,7 +24282,7 @@ function sum(xs) {
 }
 
 module.exports = sum;
-},{}],145:[function(require,module,exports){
+},{}],136:[function(require,module,exports){
 'use strict';
 
 /**
@@ -25345,7 +24342,7 @@ function TrackStats(trackId, statsReport) {
 };
 
 module.exports = TrackStats;
-},{}],146:[function(require,module,exports){
+},{}],137:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -25415,7 +24412,7 @@ var TrackTransceiver = function (_EventEmitter) {
  */
 
 module.exports = TrackTransceiver;
-},{"events":35}],147:[function(require,module,exports){
+},{"events":26}],138:[function(require,module,exports){
 (function (global){(function (){
 'use strict';
 
@@ -26183,7 +25180,7 @@ TwilioConnection.CloseReason = CloseReason;
 
 module.exports = TwilioConnection;
 }).call(this)}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./statemachine":115,"./util":156,"./util/log":160,"./util/networkmonitor":162,"./util/timeout":171,"ws":180}],148:[function(require,module,exports){
+},{"./statemachine":106,"./util":147,"./util/log":151,"./util/networkmonitor":153,"./util/timeout":162,"ws":171}],139:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -26271,7 +25268,7 @@ var AsyncVar = function () {
 }();
 
 module.exports = AsyncVar;
-},{"./":156}],149:[function(require,module,exports){
+},{"./":147}],140:[function(require,module,exports){
 'use strict';
 
 /**
@@ -26419,7 +25416,7 @@ var CancelablePromise = function () {
 }();
 
 module.exports = CancelablePromise;
-},{}],150:[function(require,module,exports){
+},{}],141:[function(require,module,exports){
 'use strict';
 
 module.exports.DEFAULT_ENVIRONMENT = 'prod';
@@ -26515,7 +25512,7 @@ module.exports.videoContentPreferencesMode = {
   MODE_AUTO: 'auto',
   MODE_MANUAL: 'manual'
 };
-},{}],151:[function(require,module,exports){
+},{}],142:[function(require,module,exports){
 'use strict';
 
 var detectSilence = require('../webaudio/detectsilence');
@@ -26562,7 +25559,7 @@ function detectSilentAudio(el) {
 }
 
 module.exports = detectSilentAudio;
-},{"../webaudio/audiocontext":176,"../webaudio/detectsilence":177}],152:[function(require,module,exports){
+},{"../webaudio/audiocontext":167,"../webaudio/detectsilence":168}],143:[function(require,module,exports){
 'use strict';
 
 // Cached copy of the <canvas> used to check silent video frames.
@@ -26628,7 +25625,7 @@ function detectSilentVideo(el) {
 }
 
 module.exports = detectSilentVideo;
-},{}],153:[function(require,module,exports){
+},{}],144:[function(require,module,exports){
 'use strict';
 
 /**
@@ -26802,7 +25799,7 @@ var DocumentVisibilityMonitor = function () {
 }();
 
 module.exports = new DocumentVisibilityMonitor(2);
-},{}],154:[function(require,module,exports){
+},{}],145:[function(require,module,exports){
 /* eslint-disable no-console */
 'use strict';
 
@@ -26922,7 +25919,7 @@ var EventObserver = function (_EventEmitter) {
  */
 
 module.exports = EventObserver;
-},{"events":35}],155:[function(require,module,exports){
+},{"events":26}],146:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -26987,7 +25984,7 @@ var Filter = function () {
 }();
 
 module.exports = Filter;
-},{}],156:[function(require,module,exports){
+},{}],147:[function(require,module,exports){
 'use strict';
 
 var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
@@ -27893,7 +26890,7 @@ exports.withJitter = withJitter;
 exports.isChromeScreenShareTrack = isChromeScreenShareTrack;
 exports.waitForSometime = waitForSometime;
 exports.waitForEvent = waitForEvent;
-},{"./constants":150,"@twilio/webrtc/lib/util":25}],157:[function(require,module,exports){
+},{"./constants":141,"@twilio/webrtc/lib/util":16}],148:[function(require,module,exports){
 (function (global){(function (){
 'use strict';
 
@@ -28211,7 +27208,7 @@ function reconnect(publisher, token, sdkName, sdkVersion, roomSid, participantSi
 
 module.exports = InsightsPublisher;
 }).call(this)}).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"..":156,"../../util":156,"events":35,"ws":180}],158:[function(require,module,exports){
+},{"..":147,"../../util":147,"events":26,"ws":171}],149:[function(require,module,exports){
 // eslint-disable-next-line no-warning-comments
 // TODO(mroberts): This should be described as implementing some
 // InsightsPublisher interface.
@@ -28278,7 +27275,7 @@ var InsightsPublisher = function () {
 }();
 
 module.exports = InsightsPublisher;
-},{}],159:[function(require,module,exports){
+},{}],150:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -28365,7 +27362,7 @@ var LocalMediaRestartDeferreds = function () {
 }();
 
 module.exports = new LocalMediaRestartDeferreds();
-},{"./":156}],160:[function(require,module,exports){
+},{"./":147}],151:[function(require,module,exports){
 /* eslint new-cap:0 */
 'use strict';
 
@@ -28707,7 +27704,7 @@ function validateLogLevels(levels) {
 }
 
 module.exports = Log;
-},{"../vendor/loglevel":175,"./constants":150}],161:[function(require,module,exports){
+},{"../vendor/loglevel":166,"./constants":141}],152:[function(require,module,exports){
 'use strict';
 
 /**
@@ -28772,7 +27769,7 @@ var MovingAverageDelta = function () {
 }();
 
 module.exports = MovingAverageDelta;
-},{}],162:[function(require,module,exports){
+},{}],153:[function(require,module,exports){
 'use strict';
 
 /**
@@ -28887,7 +27884,7 @@ var NetworkMonitor = function () {
 }();
 
 module.exports = NetworkMonitor;
-},{}],163:[function(require,module,exports){
+},{}],154:[function(require,module,exports){
 /* eslint-disable no-console */
 'use strict';
 
@@ -28971,7 +27968,7 @@ var NullResizeObserver = function (_NullObserver2) {
 }(NullObserver);
 
 module.exports = { NullIntersectionObserver: NullIntersectionObserver, NullResizeObserver: NullResizeObserver, NullObserver: NullObserver };
-},{}],164:[function(require,module,exports){
+},{}],155:[function(require,module,exports){
 'use strict';
 
 var _slicedToArray = function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i["return"]) _i["return"](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError("Invalid attempt to destructure non-iterable instance"); } }; }();
@@ -29644,7 +28641,7 @@ exports.setSimulcast = setSimulcast;
 exports.unifiedPlanFilterLocalCodecs = unifiedPlanFilterLocalCodecs;
 exports.unifiedPlanAddOrRewriteNewTrackIds = unifiedPlanAddOrRewriteNewTrackIds;
 exports.unifiedPlanAddOrRewriteTrackIds = unifiedPlanAddOrRewriteTrackIds;
-},{"../":156,"./simulcast":166}],165:[function(require,module,exports){
+},{"../":147,"./simulcast":157}],156:[function(require,module,exports){
 'use strict';
 
 var RTCSessionDescription = require('@twilio/webrtc').RTCSessionDescription;
@@ -29859,7 +28856,7 @@ function addFmtpAttributeForRtxPt(mediaSection, rtxPt, pt) {
 }
 
 module.exports = workaround;
-},{"./":164,"@twilio/webrtc":12}],166:[function(require,module,exports){
+},{"./":155,"@twilio/webrtc":3}],157:[function(require,module,exports){
 'use strict';
 
 var _slicedToArray = function () { function sliceIterator(arr, i) { var _arr = []; var _n = true; var _d = false; var _e = undefined; try { for (var _i = arr[Symbol.iterator](), _s; !(_n = (_s = _i.next()).done); _n = true) { _arr.push(_s.value); if (i && _arr.length === i) break; } } catch (err) { _d = true; _e = err; } finally { try { if (!_n && _i["return"]) _i["return"](); } finally { if (_d) throw _e; } } return _arr; } return function (arr, i) { if (Array.isArray(arr)) { return arr; } else if (Symbol.iterator in Object(arr)) { return sliceIterator(arr, i); } else { throw new TypeError("Invalid attempt to destructure non-iterable instance"); } }; }();
@@ -30197,7 +29194,7 @@ function setSimulcastInMediaSection(section, sdpFormat, trackIdsToAttributes) {
  */
 
 module.exports = setSimulcastInMediaSection;
-},{"../":156}],167:[function(require,module,exports){
+},{"../":147}],158:[function(require,module,exports){
 'use strict';
 
 /**
@@ -30240,7 +29237,7 @@ var IdentityTrackMatcher = function () {
 }();
 
 module.exports = IdentityTrackMatcher;
-},{}],168:[function(require,module,exports){
+},{}],159:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -30305,7 +29302,7 @@ var MIDTrackMatcher = function () {
 }();
 
 module.exports = MIDTrackMatcher;
-},{"../":164}],169:[function(require,module,exports){
+},{"../":155}],160:[function(require,module,exports){
 'use strict';
 
 var _createClass = function () { function defineProperties(target, props) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } } return function (Constructor, protoProps, staticProps) { if (protoProps) defineProperties(Constructor.prototype, protoProps); if (staticProps) defineProperties(Constructor, staticProps); return Constructor; }; }();
@@ -30447,7 +29444,7 @@ var OrderedTrackMatcher = function () {
 }();
 
 module.exports = OrderedTrackMatcher;
-},{"../":164,"../../":156}],170:[function(require,module,exports){
+},{"../":155,"../../":147}],161:[function(require,module,exports){
 /* globals chrome, navigator */
 'use strict';
 
@@ -30592,7 +29589,7 @@ function isSupported() {
 }
 
 module.exports = isSupported;
-},{"@twilio/webrtc/lib/util":25}],171:[function(require,module,exports){
+},{"@twilio/webrtc/lib/util":16}],162:[function(require,module,exports){
 'use strict';
 
 /**
@@ -30717,7 +29714,7 @@ var Timeout = function () {
 }();
 
 module.exports = Timeout;
-},{}],172:[function(require,module,exports){
+},{}],163:[function(require,module,exports){
 // NOTE: Do not edit this file. This code is auto-generated. Contact the
 // Twilio SDK Team for more information.
 
@@ -31963,7 +30960,7 @@ var ConfigurationAcquireTurnFailedError = function (_TwilioError53) {
 
 exports.ConfigurationAcquireTurnFailedError = ConfigurationAcquireTurnFailedError;
 Object.defineProperty(TwilioErrorByCode, 53501, { value: ConfigurationAcquireTurnFailedError });
-},{"./twilioerror":173}],173:[function(require,module,exports){
+},{"./twilioerror":164}],164:[function(require,module,exports){
 'use strict';
 
 /**
@@ -32035,7 +31032,7 @@ var TwilioError = function (_Error) {
 }(Error);
 
 module.exports = TwilioError;
-},{}],174:[function(require,module,exports){
+},{}],165:[function(require,module,exports){
 'use strict';
 
 var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
@@ -32165,7 +31162,7 @@ function validateRenderDimensions(renderDimensions) {
 exports.validateBandwidthProfile = validateBandwidthProfile;
 exports.validateLocalTrack = validateLocalTrack;
 exports.validateObject = validateObject;
-},{"./":156,"./constants":150}],175:[function(require,module,exports){
+},{"./":147,"./constants":141}],166:[function(require,module,exports){
 "use strict";
 
 var _typeof = typeof Symbol === "function" && typeof Symbol.iterator === "symbol" ? function (obj) { return typeof obj; } : function (obj) { return obj && typeof Symbol === "function" && obj.constructor === Symbol && obj !== Symbol.prototype ? "symbol" : typeof obj; };
@@ -32424,7 +31421,7 @@ defaultLogger.getLoggers = function getLoggers() {
 defaultLogger['default'] = defaultLogger;
 
 module.exports = defaultLogger;
-},{}],176:[function(require,module,exports){
+},{}],167:[function(require,module,exports){
 /* globals webkitAudioContext, AudioContext */
 'use strict';
 
@@ -32523,7 +31520,7 @@ var AudioContextFactory = function () {
 }();
 
 module.exports = new AudioContextFactory();
-},{}],177:[function(require,module,exports){
+},{}],168:[function(require,module,exports){
 'use strict';
 
 /**
@@ -32588,7 +31585,7 @@ function detectSilence(audioContext, stream, timeout) {
 }
 
 module.exports = detectSilence;
-},{}],178:[function(require,module,exports){
+},{}],169:[function(require,module,exports){
 'use strict';
 
 var detectSilence = require('./detectsilence');
@@ -32662,7 +31659,7 @@ to get a new one, but we\'ve run out of retries; returning it anyway.');
 }
 
 module.exports = workaround;
-},{"./audiocontext":176,"./detectsilence":177}],179:[function(require,module,exports){
+},{"./audiocontext":167,"./detectsilence":168}],170:[function(require,module,exports){
 module.exports={
   "name": "twilio-video",
   "title": "Twilio Video",
@@ -32812,10 +31809,10 @@ module.exports={
   }
 }
 
-},{}],180:[function(require,module,exports){
+},{}],171:[function(require,module,exports){
 module.exports = WebSocket;
 
-},{}],181:[function(require,module,exports){
+},{}],172:[function(require,module,exports){
 if (typeof Object.create === 'function') {
   // implementation from standard node.js 'util' module
   module.exports = function inherits(ctor, superCtor) {
@@ -32840,14 +31837,14 @@ if (typeof Object.create === 'function') {
   }
 }
 
-},{}],182:[function(require,module,exports){
+},{}],173:[function(require,module,exports){
 module.exports = function isBuffer(arg) {
   return arg && typeof arg === 'object'
     && typeof arg.copy === 'function'
     && typeof arg.fill === 'function'
     && typeof arg.readUInt8 === 'function';
 }
-},{}],183:[function(require,module,exports){
+},{}],174:[function(require,module,exports){
 (function (process,global){(function (){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -33437,4 +32434,1007 @@ function hasOwnProperty(obj, prop) {
 }
 
 }).call(this)}).call(this,require('_process'),typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{"./support/isBuffer":182,"_process":39,"inherits":181}]},{},[2]);
+},{"./support/isBuffer":173,"_process":30,"inherits":172}],175:[function(require,module,exports){
+'use strict';
+
+/**
+ * Add URL parameters to the web app URL.
+ * @param params - the parameters to add
+ */
+function addUrlParams(params) {
+  const combinedParams = Object.assign(getUrlParams(), params);
+  const serializedParams = Object.entries(combinedParams)
+    .map(([name, value]) => `${name}=${encodeURIComponent(value)}`)
+    .join('&');
+  history.pushState(null, '', `${location.pathname}?${serializedParams}`);
+}
+
+/**
+ * Generate an object map of URL parameters.
+ * @returns {*}
+ */
+function getUrlParams() {
+  const serializedParams = location.search.split('?')[1];
+  const nvpairs = serializedParams ? serializedParams.split('&') : [];
+  return nvpairs.reduce((params, nvpair) => {
+    const [name, value] = nvpair.split('=');
+    params[name] = decodeURIComponent(value);
+    return params;
+  }, {});
+}
+
+/**
+ * Whether the web app is running on a mobile browser.
+ * @type {boolean}
+ */
+const isMobile = (() => {
+  if (typeof navigator === 'undefined' || typeof navigator.userAgent !== 'string') {
+    return false;
+  }
+  return /Mobile/.test(navigator.userAgent);
+})();
+
+module.exports = {
+  addUrlParams,
+  getUrlParams,
+  isMobile
+};
+
+},{}],176:[function(require,module,exports){
+'use strict';
+
+const { isSupported } = require('twilio-video');
+
+const { isMobile } = require('./browser');
+const joinRoom = require('./joinroom');
+const micLevel = require('./miclevel');
+const selectMedia = require('./selectmedia');
+const selectRoom = require('./selectroom');
+const showError = require('./showerror');
+
+const $modals = $('#modals');
+const $selectMicModal = $('#select-mic', $modals);
+const $selectCameraModal = $('#select-camera', $modals);
+const $showErrorModal = $('#show-error', $modals);
+const $joinRoomModal = $('#join-room', $modals);
+
+// ConnectOptions settings for a video web application.
+const connectOptions = {
+  // Available only in Small Group or Group Rooms only. Please set "Room Type"
+  // to "Group" or "Small Group" in your Twilio Console:
+  // https://www.twilio.com/console/video/configure
+  bandwidthProfile: {
+    video: {
+      dominantSpeakerPriority: 'high',
+      mode: 'collaboration',
+      clientTrackSwitchOffControl: 'auto',
+      contentPreferencesMode: 'auto'
+    }
+  },
+
+  // Available only in Small Group or Group Rooms only. Please set "Room Type"
+  // to "Group" or "Small Group" in your Twilio Console:
+  // https://www.twilio.com/console/video/configure
+  dominantSpeaker: true,
+
+  // Comment this line if you are playing music.
+  maxAudioBitrate: 16000,
+
+  // VP8 simulcast enables the media server in a Small Group or Group Room
+  // to adapt your encoded video quality for each RemoteParticipant based on
+  // their individual bandwidth constraints. This has no utility if you are
+  // using Peer-to-Peer Rooms, so you can comment this line.
+  preferredVideoCodecs: [{ codec: 'VP8', simulcast: true }],
+
+  // Capture 720p video @ 24 fps.
+  video: { height: 720, frameRate: 24, width: 1280 }
+};
+
+// For mobile browsers, limit the maximum incoming video bitrate to 2.5 Mbps.
+if (isMobile) {
+  connectOptions
+    .bandwidthProfile
+    .video
+    .maxSubscriptionBitrate = 2500000;
+}
+
+// On mobile browsers, there is the possibility of not getting any media even
+// after the user has given permission, most likely due to some other app reserving
+// the media device. So, we make sure users always test their media devices before
+// joining the Room. For more best practices, please refer to the following guide:
+// https://www.twilio.com/docs/video/build-js-video-application-recommendations-and-best-practices
+const deviceIds = {
+  audio: isMobile ? null : localStorage.getItem('audioDeviceId'),
+  video: isMobile ? null : localStorage.getItem('videoDeviceId')
+};
+
+/**
+ * Select your Room name, your screen name and join.
+ * @param [error=null] - Error from the previous Room session, if any
+ */
+async function selectAndJoinRoom(error = null) {
+  const formData = await selectRoom($joinRoomModal, error);
+  if (!formData) {
+    // User wants to change the camera and microphone.
+    // So, show them the microphone selection modal.
+    deviceIds.audio = null;
+    deviceIds.video = null;
+    return selectMicrophone();
+  }
+  const { identity, roomName } = formData;
+
+  try {
+    // Fetch an AccessToken to join the Room.
+    const response = await fetch(`/token?identity=${identity}`);
+
+    // Extract the AccessToken from the Response.
+    const token = await response.text();
+
+    // Add the specified audio device ID to ConnectOptions.
+    connectOptions.audio = { deviceId: { exact: deviceIds.audio } };
+
+    // Add the specified Room name to ConnectOptions.
+    connectOptions.name = roomName;
+
+    // Add the specified video device ID to ConnectOptions.
+    connectOptions.video.deviceId = { exact: deviceIds.video };
+
+    // Join the Room.
+    await joinRoom(token, connectOptions);
+
+    // After the video session, display the room selection modal.
+    return selectAndJoinRoom();
+  } catch (error) {
+    return selectAndJoinRoom(error);
+  }
+}
+
+/**
+ * Select your camera.
+ */
+async function selectCamera() {
+  if (deviceIds.video === null) {
+    try {
+      deviceIds.video = await selectMedia('video', $selectCameraModal, videoTrack => {
+        const $video = $('video', $selectCameraModal);
+        videoTrack.attach($video.get(0))
+      });
+    } catch (error) {
+      showError($showErrorModal, error);
+      return;
+    }
+  }
+  return selectAndJoinRoom();
+}
+
+/**
+ * Select your microphone.
+ */
+async function selectMicrophone() {
+  if (deviceIds.audio === null) {
+    try {
+      deviceIds.audio = await selectMedia('audio', $selectMicModal, audioTrack => {
+        const $levelIndicator = $('svg rect', $selectMicModal);
+        const maxLevel = Number($levelIndicator.attr('height'));
+        micLevel(audioTrack, maxLevel, level => $levelIndicator.attr('y', maxLevel - level));
+      });
+    } catch (error) {
+      showError($showErrorModal, error);
+      return;
+    }
+  }
+  return selectCamera();
+}
+
+// If the current browser is not supported by twilio-video.js, show an error
+// message. Otherwise, start the application.
+window.addEventListener('load', isSupported ? selectMicrophone : () => {
+  showError($showErrorModal, new Error('This browser is not supported.'));
+});
+
+},{"./browser":175,"./joinroom":177,"./miclevel":178,"./selectmedia":180,"./selectroom":181,"./showerror":182,"twilio-video":41}],177:[function(require,module,exports){
+'use strict';
+
+const { connect, createLocalVideoTrack, Logger } = require('twilio-video');
+const { isMobile } = require('./browser');
+
+const $leave = $('#leave-room');
+const $room = $('#room');
+const $activeParticipant = $('div#active-participant > div.participant.main', $room);
+const $activeVideo = $('video', $activeParticipant);
+const $participants = $('div#participants', $room);
+const mutehelper = require('./mutehelper');
+// The current active Participant in the Room.
+let activeParticipant = null;
+
+// Whether the user has selected the active Participant by clicking on
+// one of the video thumbnails.
+let isActiveParticipantPinned = false;
+
+/**
+ * Set the active Participant's video.
+ * @param participant - the active Participant
+ */
+function setActiveParticipant(participant) {
+  if (activeParticipant) {
+    const $activeParticipant = $(`div#${activeParticipant.sid}`, $participants);
+    $activeParticipant.removeClass('active');
+    $activeParticipant.removeClass('pinned');
+
+    // Detach any existing VideoTrack of the active Participant.
+    const { track: activeTrack } = Array.from(activeParticipant.videoTracks.values())[0] || {};
+    if (activeTrack) {
+      activeTrack.detach($activeVideo.get(0));
+      $activeVideo.css('opacity', '0');
+    }
+  }
+
+  // Set the new active Participant.
+  activeParticipant = participant;
+  const { identity, sid } = participant;
+  const $participant = $(`div#${sid}`, $participants);
+
+  $participant.addClass('active');
+  if (isActiveParticipantPinned) {
+    $participant.addClass('pinned');
+  }
+
+  // Attach the new active Participant's video.
+  const { track } = Array.from(participant.videoTracks.values())[0] || {};
+  if (track) {
+    track.attach($activeVideo.get(0));
+    $activeVideo.css('opacity', '');
+  }
+
+  // Set the new active Participant's identity
+  $activeParticipant.attr('data-identity', identity);
+}
+
+/**
+ * Set the current active Participant in the Room.
+ * @param room - the Room which contains the current active Participant
+ */
+function setCurrentActiveParticipant(room) {
+  const { dominantSpeaker, localParticipant } = room;
+  setActiveParticipant(dominantSpeaker || localParticipant);
+}
+
+/**
+ * Set up the Participant's media container.
+ * @param participant - the Participant whose media container is to be set up
+ * @param room - the Room that the Participant joined
+ */
+function setupParticipantContainer(participant, room) {
+  const { identity, sid } = participant;
+
+  // Add a container for the Participant's media.
+  const $container = $(`<div class="participant" data-identity="${identity}" id="${sid}">
+    <audio autoplay ${participant === room.localParticipant ? 'muted' : ''} style="opacity: 0"></audio>
+                      <i id="activeIcon" class="fas fa-volume-up"></i>
+                      <i id="inactiveIcon" class="fas fa-volume-mute"></i>
+    <video autoplay muted playsinline style="opacity: 0"></video>
+  </div>`);
+
+  // Toggle the pinning of the active Participant's video.
+  $container.on('click', () => {
+    if (activeParticipant === participant && isActiveParticipantPinned) {
+      // Unpin the RemoteParticipant and update the current active Participant.
+      setVideoPriority(participant, null);
+      isActiveParticipantPinned = false;
+      setCurrentActiveParticipant(room);
+    } else {
+      // Pin the RemoteParticipant as the active Participant.
+      if (isActiveParticipantPinned) {
+        setVideoPriority(activeParticipant, null);
+      }
+      setVideoPriority(participant, 'high');
+      isActiveParticipantPinned = true;
+      setActiveParticipant(participant);
+    }
+  });
+
+  // Add the Participant's container to the DOM.
+  $participants.append($container);
+}
+
+/**
+ * Set the VideoTrack priority for the given RemoteParticipant. This has no
+ * effect in Peer-to-Peer Rooms.
+ * @param participant - the RemoteParticipant whose VideoTrack priority is to be set
+ * @param priority - null | 'low' | 'standard' | 'high'
+ */
+function setVideoPriority(participant, priority) {
+  participant.videoTracks.forEach(publication => {
+    const track = publication.track;
+    if (track && track.setPriority) {
+      track.setPriority(priority);
+    }
+  });
+}
+
+/**
+ * Attach a Track to the DOM.
+ * @param track - the Track to attach
+ * @param participant - the Participant which published the Track
+ */
+function attachTrack(track, participant) {
+  // Attach the Participant's Track to the thumbnail.
+  const $media = $(`div#${participant.sid} > ${track.kind}`, $participants);
+  $media.css('opacity', '');
+  track.attach($media.get(0));
+
+  // If the attached Track is a VideoTrack that is published by the active
+  // Participant, then attach it to the main video as well.
+  if (track.kind === 'video' && participant === activeParticipant) {
+    track.attach($activeVideo.get(0));
+    $activeVideo.css('opacity', '');
+  }
+}
+
+/**
+ * Detach a Track from the DOM.
+ * @param track - the Track to be detached
+ * @param participant - the Participant that is publishing the Track
+ */
+function detachTrack(track, participant) {
+  // Detach the Participant's Track from the thumbnail.
+  const $media = $(`div#${participant.sid} > ${track.kind}`, $participants);
+  $media.css('opacity', '0');
+  track.detach($media.get(0));
+
+  // If the detached Track is a VideoTrack that is published by the active
+  // Participant, then detach it from the main video as well.
+  if (track.kind === 'video' && participant === activeParticipant) {
+    track.detach($activeVideo.get(0));
+    $activeVideo.css('opacity', '0');
+  }
+}
+
+/**
+ * Handle the Participant's media.
+ * @param participant - the Participant
+ * @param room - the Room that the Participant joined
+ */
+function participantConnected(participant, room) {
+  // Set up the Participant's media container.
+  setupParticipantContainer(participant, room);
+
+  // Handle the TrackPublications already published by the Participant.
+  participant.tracks.forEach(publication => {
+    trackPublished(publication, participant);
+  });
+
+  // Handle theTrackPublications that will be published by the Participant later.
+  participant.on('trackPublished', publication => {
+    trackPublished(publication, participant);
+  });
+  
+}
+
+/**
+ * Handle a disconnected Participant.
+ * @param participant - the disconnected Participant
+ * @param room - the Room that the Participant disconnected from
+ */
+function participantDisconnected(participant, room) {
+  // If the disconnected Participant was pinned as the active Participant, then
+  // unpin it so that the active Participant can be updated.
+  if (activeParticipant === participant && isActiveParticipantPinned) {
+    isActiveParticipantPinned = false;
+    setCurrentActiveParticipant(room);
+  }
+
+  // Remove the Participant's media container.
+  $(`div#${participant.sid}`, $participants).remove();
+}
+
+/**
+ * Handle to the TrackPublication's media.
+ * @param publication - the TrackPublication
+ * @param participant - the publishing Participant
+ */
+function trackPublished(publication, participant) {
+  // If the TrackPublication is already subscribed to, then attach the Track to the DOM.
+  if (publication.track) {
+    attachTrack(publication.track, participant);
+  }
+
+  // Once the TrackPublication is subscribed to, attach the Track to the DOM.
+  publication.on('subscribed', track => {
+    attachTrack(track, participant);
+  });
+
+  // Once the TrackPublication is unsubscribed from, detach the Track from the DOM.
+  publication.on('unsubscribed', track => {
+    detachTrack(track, participant);
+  });
+}
+
+/**
+ * Join a Room.
+ * @param token - the AccessToken used to join a Room
+ * @param connectOptions - the ConnectOptions used to join a Room
+ */
+async function joinRoom(token, connectOptions) {
+  // Comment the next two lines to disable verbose logging.
+  const logger = Logger.getLogger('twilio-video');
+  logger.setLevel('debug');
+
+  // Join to the Room with the given AccessToken and ConnectOptions.
+  const room = await connect(token, connectOptions);
+
+  // Save the LocalVideoTrack.
+  let localVideoTrack = Array.from(room.localParticipant.videoTracks.values())[0].track;
+
+  // Make the Room available in the JavaScript console for debugging.
+  window.room = room;
+
+  // Handle the LocalParticipant's media.
+  participantConnected(room.localParticipant, room);
+
+  // Subscribe to the media published by RemoteParticipants already in the Room.
+  room.participants.forEach(participant => {
+    participantConnected(participant, room);
+  });
+
+  // Subscribe to the media published by RemoteParticipants joining the Room later.
+  room.on('participantConnected', participant => {
+    participantConnected(participant, room);
+  });
+
+  // Handle a disconnected RemoteParticipant.
+  room.on('participantDisconnected', participant => {
+    participantDisconnected(participant, room);
+  });
+
+  // Set the current active Participant.
+  setCurrentActiveParticipant(room);
+
+  // Update the active Participant when changed, only if the user has not
+  // pinned any particular Participant as the active Participant.
+  room.on('dominantSpeakerChanged', () => {
+    if (!isActiveParticipantPinned) {
+      setCurrentActiveParticipant(room);
+    }
+  });
+
+  // Leave the Room when the "Leave Room" button is clicked.
+  $leave.click(function onLeave() {
+    $leave.off('click', onLeave);
+    room.disconnect();
+  });
+
+  return new Promise((resolve, reject) => {
+    // Leave the Room when the "beforeunload" event is fired.
+    window.onbeforeunload = () => {
+      room.disconnect();
+    };
+
+    if (isMobile) {
+      // TODO(mmalavalli): investigate why "pagehide" is not working in iOS Safari.
+      // In iOS Safari, "beforeunload" is not fired, so use "pagehide" instead.
+      window.onpagehide = () => {
+        room.disconnect();
+      };
+
+      // On mobile browsers, use "visibilitychange" event to determine when
+      // the app is backgrounded or foregrounded.
+      document.onvisibilitychange = async () => {
+        if (document.visibilityState === 'hidden') {
+          // When the app is backgrounded, your app can no longer capture
+          // video frames. So, stop and unpublish the LocalVideoTrack.
+          localVideoTrack.stop();
+          room.localParticipant.unpublishTrack(localVideoTrack);
+        } else {
+          // When the app is foregrounded, your app can now continue to
+          // capture video frames. So, publish a new LocalVideoTrack.
+          localVideoTrack = await createLocalVideoTrack(connectOptions.video);
+          await room.localParticipant.publishTrack(localVideoTrack);
+        }
+      };
+    }
+
+    room.once('disconnected', (room, error) => {
+      // Clear the event handlers on document and window..
+      window.onbeforeunload = null;
+      if (isMobile) {
+        window.onpagehide = null;
+        document.onvisibilitychange = null;
+      }
+
+      // Stop the LocalVideoTrack.
+      localVideoTrack.stop();
+
+      // Handle the disconnected LocalParticipant.
+      participantDisconnected(room.localParticipant, room);
+
+      // Handle the disconnected RemoteParticipants.
+      room.participants.forEach(participant => {
+        participantDisconnected(participant, room);
+      });
+
+      // Clear the active Participant's video.
+      $activeVideo.get(0).srcObject = null;
+
+      // Clear the Room reference used for debugging from the JavaScript console.
+      window.room = null;
+
+      if (error) {
+        // Reject the Promise with the TwilioError so that the Room selection
+        // modal (plus the TwilioError message) can be displayed.
+        reject(error);
+      } else {
+        // Resolve the Promise so that the Room selection modal can be
+        // displayed.
+        resolve();
+      }
+    });
+  });
+}
+
+const muteYourAudio = mutehelper.muteYourAudio;
+const muteYourVideo = mutehelper.muteYourVideo;
+const unmuteYourAudio = mutehelper.unmuteYourAudio;
+const unmuteYourVideo = mutehelper.unmuteYourVideo;
+const participantMutedOrUnmutedMedia = mutehelper.participantMutedOrUnmutedMedia;
+
+muteAudioButn.onclick = () => {
+  // alert("Hello! I am an alert box!!");
+  const mute = !muteAudioButn.classList.contains('muted');
+  // const activeIcon = document.getElementById('activeIcon');
+  // const inactiveIcon = document.getElementById('inactiveIcon');
+
+  if(mute) {
+    muteYourAudio(room);
+    muteAudioButn.classList.add('muted');
+    muteAudioButn.innerText = 'Enable Audio';
+    activeIcon.id = 'inactiveIcon';
+    inactiveIcon.id = 'activeIcon';
+
+  } else {
+    unmuteYourAudio(room);
+    muteAudioButn.classList.remove('muted');
+    muteAudioButn.innerText = 'Disable Audio';
+    activeIcon.id = 'inactiveIcon';
+    inactiveIcon.id = 'activeIcon';
+  }
+}
+muteVideoButn.onclick = () => {
+  const mute = !muteVideoButn.classList.contains('muted');
+
+  if(mute) {
+    muteYourVideo(room);
+    muteVideoButn.classList.add('muted');
+    muteVideoButn.innerText = 'Enable Video';
+  } else {
+    unmuteYourVideo(room);
+    muteVideoButn.classList.remove('muted');
+    muteVideoButn.innerText = 'Disable Video';
+  }
+}
+
+module.exports = joinRoom;
+
+},{"./browser":175,"./mutehelper":179,"twilio-video":41}],178:[function(require,module,exports){
+'use strict';
+
+const AudioContext = window.AudioContext || window.webkitAudioContext;
+const audioContext = AudioContext ? new AudioContext() : null;
+
+/**
+ * Calculate the root mean square (RMS) of the given array.
+ * @param samples
+ * @returns {number} the RMS value
+ */
+function rootMeanSquare(samples) {
+  const sumSq = samples.reduce((sumSq, sample) => sumSq + sample * sample, 0);
+  return Math.sqrt(sumSq / samples.length);
+}
+
+/**
+ * Poll the microphone's input level.
+ * @param audioTrack - the AudioTrack representing the microphone
+ * @param maxLevel - the calculated level should be in the range [0 - maxLevel]
+ * @param onLevel - called when the input level changes
+ */
+module.exports = audioContext
+  ? function micLevel(audioTrack, maxLevel, onLevel) {
+      audioContext.resume().then(() => {
+        let rafID;
+
+        const initializeAnalyser = () => {
+          const analyser = audioContext.createAnalyser();
+          analyser.fftSize = 1024;
+          analyser.smoothingTimeConstant = 0.5;
+
+          const stream = new MediaStream([audioTrack.mediaStreamTrack]);
+          const audioSource = audioContext.createMediaStreamSource(stream);
+          const samples = new Uint8Array(analyser.frequencyBinCount);
+
+          audioSource.connect(analyser);
+          startAnimation(analyser, samples);
+        };
+
+        initializeAnalyser();
+
+        // We listen to when the Audio Track is started, and once it is,
+        // the Analyser Node is restarted.
+        audioTrack.on('started', initializeAnalyser);
+
+        let level = null;
+
+        function startAnimation(analyser, samples) {
+          window.cancelAnimationFrame(rafID);
+
+          rafID = requestAnimationFrame(function checkLevel() {
+            analyser.getByteFrequencyData(samples);
+            const rms = rootMeanSquare(samples);
+            const log2Rms = rms && Math.log2(rms);
+            const newLevel = Math.ceil((maxLevel * log2Rms) / 8);
+
+            if (level !== newLevel) {
+              level = newLevel;
+              onLevel(level);
+            }
+
+            rafID =  requestAnimationFrame(audioTrack.mediaStreamTrack.readyState === 'ended'
+              ? () => onLevel(0)
+              : checkLevel);
+          });
+        }
+      });
+    }
+  : function notSupported() {
+      // Do nothing.
+    };
+
+},{}],179:[function(require,module,exports){
+'use strict';
+
+/**
+ * Mute/unmute your media in a Room.
+ * @param {Room} room - The Room you have joined
+ * @param {'audio'|'video'} kind - The type of media you want to mute/unmute
+ * @param {'mute'|'unmute'} action - Whether you want to mute/unmute
+ */
+function muteOrUnmuteYourMedia(room, kind, action) {
+  const publications = kind === 'audio'
+    ? room.localParticipant.audioTracks
+    : room.localParticipant.videoTracks;
+
+  publications.forEach(function(publication) {
+    if (action === 'mute') {
+      publication.track.disable();
+    } else {
+      publication.track.enable();
+    }
+  });
+}
+
+/**
+ * Mute your audio in a Room.
+ * @param {Room} room - The Room you have joined
+ * @returns {void}
+ */
+function muteYourAudio(room) {
+  muteOrUnmuteYourMedia(room, 'audio', 'mute');
+}
+
+/**
+ * Mute your video in a Room.
+ * @param {Room} room - The Room you have joined
+ * @returns {void}
+ */
+function muteYourVideo(room) {
+  muteOrUnmuteYourMedia(room, 'video', 'mute');
+}
+
+/**
+ * Unmute your audio in a Room.
+ * @param {Room} room - The Room you have joined
+ * @returns {void}
+ */
+function unmuteYourAudio(room) {
+  muteOrUnmuteYourMedia(room, 'audio', 'unmute');
+}
+
+/**
+ * Unmute your video in a Room.
+ * @param {Room} room - The Room you have joined
+ * @returns {void}
+ */
+function unmuteYourVideo(room) {
+  muteOrUnmuteYourMedia(room, 'video', 'unmute');
+}
+
+/**
+ * A RemoteParticipant muted or unmuted its media.
+ * @param {Room} room - The Room you have joined
+ * @param {function} onMutedMedia - Called when a RemoteParticipant muted its media
+ * @param {function} onUnmutedMedia - Called when a RemoteParticipant unmuted its media
+ * @returns {void}
+ */
+function participantMutedOrUnmutedMedia(room, onMutedMedia, onUnmutedMedia) {
+  room.on('trackSubscribed', function(track, publication, participant) {
+    track.on('disabled', function() {
+      return onMutedMedia(track, participant);
+    });
+    track.on('enabled', function() {
+      return onUnmutedMedia(track, participant);
+    });
+  });
+}
+
+exports.muteYourAudio = muteYourAudio;
+exports.muteYourVideo = muteYourVideo;
+exports.unmuteYourAudio = unmuteYourAudio;
+exports.unmuteYourVideo = unmuteYourVideo;
+exports.participantMutedOrUnmutedMedia = participantMutedOrUnmutedMedia;
+},{}],180:[function(require,module,exports){
+'use strict';
+
+const { createLocalTracks } = require('twilio-video');
+
+const localTracks = {
+  audio: null,
+  video: null
+};
+
+/**
+ * Start capturing media from the given input device.
+ * @param kind - 'audio' or 'video'
+ * @param deviceId - the input device ID
+ * @param render - the render callback
+ * @returns {Promise<void>} Promise that is resolved if successful
+ */
+async function applyInputDevice(kind, deviceId, render) {
+  // Create a new LocalTrack from the given Device ID.
+  const [track] = await createLocalTracks({ [kind]: { deviceId } });
+
+  // Stop the previous LocalTrack, if present.
+  if (localTracks[kind]) {
+    localTracks[kind].stop();
+  }
+
+  // Render the current LocalTrack.
+  localTracks[kind] = track;
+  render(track);
+}
+
+/**
+ * Get the list of input devices of a given kind.
+ * @param kind - 'audio' | 'video'
+ * @returns {Promise<MediaDeviceInfo[]>} the list of media devices
+ */
+async function getInputDevices(kind) {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  return devices.filter(device => device.kind === `${kind}input`);
+}
+
+/**
+ * Select the input for the given media kind.
+ * @param kind - 'audio' or 'video'
+ * @param $modal - the modal for selecting the media input
+ * @param render - the media render function
+ * @returns {Promise<string>} the device ID of the selected media input
+ */
+async function selectMedia(kind, $modal, render) {
+  const $apply = $('button', $modal);
+  const $inputDevices = $('select', $modal);
+  const setDevice = () => applyInputDevice(kind, $inputDevices.val(), render);
+
+  // Get the list of available media input devices.
+  let devices =  await getInputDevices(kind);
+
+  // Apply the default media input device.
+  await applyInputDevice(kind, devices[0].deviceId, render);
+
+  // If all device IDs and/or labels are empty, that means they were
+  // enumerated before the user granted media permissions. So, enumerate
+  // the devices again.
+  if (devices.every(({ deviceId, label }) => !deviceId || !label)) {
+    devices = await getInputDevices(kind);
+  }
+
+  // Populate the modal with the list of available media input devices.
+  $inputDevices.html(devices.map(({ deviceId, label }) => {
+    return `<option value="${deviceId}">${label}</option>`;
+  }));
+
+  return new Promise(resolve => {
+    $modal.on('shown.bs.modal', function onShow() {
+      $modal.off('shown.bs.modal', onShow);
+
+      // When the user selects a different media input device, apply it.
+      $inputDevices.change(setDevice);
+
+      // When the user clicks the "Apply" button, close the modal.
+      $apply.click(function onApply() {
+        $inputDevices.off('change', setDevice);
+        $apply.off('click', onApply);
+        $modal.modal('hide');
+      });
+    });
+
+    // When the modal is closed, save the device ID.
+    $modal.on('hidden.bs.modal', function onHide() {
+      $modal.off('hidden.bs.modal', onHide);
+
+      // Stop the LocalTrack, if present.
+      if (localTracks[kind]) {
+        localTracks[kind].stop();
+        localTracks[kind] = null;
+      }
+
+      // Resolve the Promise with the saved device ID.
+      const deviceId = $inputDevices.val();
+      localStorage.setItem(`${kind}DeviceId`, deviceId);
+      resolve(deviceId);
+    });
+
+    // Show the modal.
+    $modal.modal({
+      backdrop: 'static',
+      focus: true,
+      keyboard: false,
+      show: true
+    });
+  });
+}
+
+module.exports = selectMedia;
+
+},{"twilio-video":41}],181:[function(require,module,exports){
+'use strict';
+
+const { addUrlParams, getUrlParams } = require('./browser');
+const getUserFriendlyError = require('./userfriendlyerror');
+
+/**
+ * Select your Room name and identity (screen name).
+ * @param $modal - modal for selecting your Room name and identity
+ * @param error - Error from the previous Room session, if any
+ */
+function selectRoom($modal, error) {
+  const $alert = $('div.alert', $modal);
+  const $changeMedia = $('button.btn-dark', $modal);
+  const $identity = $('#screen-name', $modal);
+  const $join = $('button.btn-primary', $modal);
+  const $roomName = $('#room-name', $modal);
+
+  // If Room name is provided as a URL parameter, pre-populate the Room name field.
+  const { roomName } = getUrlParams();
+  if (roomName) {
+    $roomName.val(roomName);
+  }
+
+  // If any previously saved user name exists, pre-populate the user name field.
+  const identity = localStorage.getItem('userName');
+  if (identity) {
+    $identity.val(identity);
+  }
+
+  if (error) {
+    $alert.html(`<h5>${error.name}${error.message
+      ? `: ${error.message}`
+      : ''}</h5>${getUserFriendlyError(error)}`);
+    $alert.css('display', '');
+  } else {
+    $alert.css('display', 'none');
+  }
+
+  return new Promise(resolve => {
+    $modal.on('shown.bs.modal', function onShow() {
+      $modal.off('shown.bs.modal', onShow);
+      $changeMedia.click(function onChangeMedia() {
+        $changeMedia.off('click', onChangeMedia);
+        $modal.modal('hide');
+        resolve(null);
+      });
+
+      $join.click(function onJoin() {
+        const identity = $identity.val();
+        const roomName = $roomName.val();
+        if (identity && roomName) {
+          // Append the Room name to the web application URL.
+          addUrlParams({ roomName });
+
+          // Save the user name.
+          localStorage.setItem('userName', identity);
+
+          $join.off('click', onJoin);
+          $modal.modal('hide');
+        }
+      });
+    });
+
+    $modal.on('hidden.bs.modal', function onHide() {
+      $modal.off('hidden.bs.modal', onHide);
+      const identity = $identity.val();
+      const roomName = $roomName.val();
+      resolve({ identity, roomName });
+    });
+
+    $modal.modal({
+      backdrop: 'static',
+      focus: true,
+      keyboard: false,
+      show: true
+    });
+  });
+}
+
+module.exports = selectRoom;
+
+},{"./browser":175,"./userfriendlyerror":183}],182:[function(require,module,exports){
+'use strict';
+
+const getUserFriendlyError = require('./userfriendlyerror');
+
+/**
+ * Show the given error.
+ * @param $modal - modal for showing the error.
+ * @param error - Error to be shown.
+ */
+function showError($modal, error) {
+  // Add the appropriate error message to the alert.
+  $('div.alert', $modal).html(getUserFriendlyError(error));
+  $modal.modal({
+    backdrop: 'static',
+    focus: true,
+    keyboard: false,
+    show: true
+  });
+
+  $('#show-error-label', $modal).text(`${error.name}${error.message
+    ? `: ${error.message}`
+    : ''}`);
+}
+
+module.exports = showError;
+
+},{"./userfriendlyerror":183}],183:[function(require,module,exports){
+'use strict';
+
+const USER_FRIENDLY_ERRORS = {
+  NotAllowedError: () => {
+    return '<b>Causes: </b><br>1. The user has denied permission for your app to access the input device either by dismissing the permission dialog or clicking on the "deny" button.<br> 2. The user has denied permission for your app to access the input device in the browser settings.<br>'
+    +'<br><b>Solutions: </b><br> 1. The user should reload your app and grant permission to access the input device.<br> 2. The user should allow access to the input device in the browser settings and then reload your app.';
+  },
+  NotFoundError: () => {
+    return '<b>Cause: </b><br>1. The user has disabled the input device for the browser in the system settings.<br>2. The user\'s machine does not have such input device connected to it.<br>'
+    +'<br><b>Solution</b><br>1. The user should enable the input device for the browser in the system settings<br>2. The user should have atleast one input device connected.';
+  },
+  NotReadableError: () => {
+    return '<b>Cause: </b><br>The browser could not start media capture with the input device even after the user gave permission, probably because another app or tab has reserved the input device.<br>'
+    +'<br><b>Solution: </b><br>The user should close all other apps and tabs that have reserved the input device and reload your app, or worst case, restart the browser.';
+  },
+  OverconstrainedError: error => {
+    return error.constraint === 'deviceId'
+      ? '<b>Cause: </b><br>Your saved microphone or camera is no longer available.<br><br><b>Solution: </b><br>Please make sure the input device is connected to the machine.'
+      : '<b>Cause: </b><br>Could not satisfy the requested media constraints. One of the reasons '
+        + 'could be that your saved microphone or camera is no longer available.<br><br><b>Solution: </b><br>Please make sure the input device is connected to the machine.';
+  },
+  TypeError: () => {
+    return '<b>Cause: </b><br><code>navigator.mediaDevices</code> does not exist.<br>'
+    + '<br><b>Solution: </b><br>If you\'re sure that the browser supports '
+    + '<code>navigator.mediaDevices</code>, make sure your app is being served '
+    + 'from a secure context (<code>localhost</code> or an <code>https</code> domain).';
+  }
+};
+
+/**
+ * Get a user friendly Error message.
+ * @param error - the Error for which a user friendly message is needed
+ * @returns {string} the user friendly message
+ */
+function getUserFriendlyError(error) {
+  const errorName = [error.name, error.constructor.name].find(errorName => {
+    return errorName in USER_FRIENDLY_ERRORS;
+  });
+  return errorName ? USER_FRIENDLY_ERRORS[errorName](error) : error.message;
+}
+
+module.exports = getUserFriendlyError;
+
+},{}]},{},[176]);
