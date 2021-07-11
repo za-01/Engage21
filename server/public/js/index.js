@@ -180,7 +180,7 @@ document.getElementById("video-call-channel").onclick = function () {
   window.open('http://localhost:8080/video/app/?roomName='+activeChannel.friendlyName+d, '_blank');
   //  alert(activeChannel.friendlyName); 
   // alert(activeChannel.createdClient);
-  activeChannel.sendMessage('Copy and paste this link in a new tab to join Video Call:             http://localhost:8080/video/app/?roomName='+activeChannel.uniqueName);
+  activeChannel.sendMessage('Copy and paste this link in a new tab to join Video Call:http://localhost:8080/video/app/?roomName='+activeChannel.friendlyName+d);
   // var divForEditChannel = document.getElementById('edit-channel');
   // var divForDeleteChannel = document.getElementById('delete-channel');
   // divForEditChannel.parentNode.removeChild(divForEditChannel);
