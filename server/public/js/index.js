@@ -176,7 +176,8 @@ $(document).ready(function() {
 });
 //Making Video Call for the channel
 document.getElementById("video-call-channel").onclick = function () {
-  window.open('http://localhost:8080/video/app/?roomName='+activeChannel.uniqueName, '_blank');
+  const d = new Date();
+  window.open('http://localhost:8080/video/app/?roomName='+activeChannel.friendlyName+d, '_blank');
   //  alert(activeChannel.friendlyName); 
   // alert(activeChannel.createdClient);
   activeChannel.sendMessage('Copy and paste this link in a new tab to join Video Call:             http://localhost:8080/video/app/?roomName='+activeChannel.uniqueName);
