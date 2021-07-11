@@ -496,7 +496,8 @@ function addMember(member) {
       .attr('data-identity', member.identity);
 
     var $img = $('<img/>')
-      .attr('src', 'http://gravatar.com/avatar/' + MD5(member.identity.toLowerCase()) + '?s=20&d=mm&r=g')
+      // .attr('src', 'http://gravatar.com/avatar/' + MD5(member.identity.toLowerCase()) + '?s=20&d=mm&r=g')
+      .attr('src', 'https://ui-avatars.com/api/?name='+member.identity.charAt(0)+"&length=1"+MD5(member.identity) + '?s=40&d=mm&r=g')
       .appendTo($el);
 
 
