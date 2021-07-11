@@ -14,6 +14,7 @@
     "chat"
   ],
   "dependencies": {
+    "@types/random-number": "^0.0.1",
     "dotenv": "^4.0.0",
     "express": "^4.15.2",
     "prismjs": "^1.6.0",

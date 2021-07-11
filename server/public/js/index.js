@@ -136,7 +136,8 @@ $(document).ready(function() {
 
     var isPrivate = $('#create-channel-private').is(':checked');
     var friendlyName = $('#create-channel-display-name').val();
-    var uniqueName = $('#create-channel-unique-name').val();
+    const d = new Date();
+    var uniqueName = friendlyName+d;
 
     client.createChannel({
       attributes: attributes,
@@ -176,19 +177,19 @@ $(document).ready(function() {
 });
 //Making Video Call for the channel
 document.getElementById("video-call-channel").onclick = function () {
-  window.open('http://localhost:8080/video/app/?roomName='+activeChannel.friendlyName, '_blank');
+  window.open('http://localhost:8080/video/app/?roomName='+activeChannel.uniqueName, '_blank');
   //  alert(activeChannel.friendlyName); 
   // alert(activeChannel.createdClient);
-  activeChannel.sendMessage('http://localhost:8080/video/app/?roomName='+activeChannel.friendlyName);
-  var divForEditChannel = document.getElementById('edit-channel');
-  var divForDeleteChannel = document.getElementById('delete-channel');
-  divForEditChannel.parentNode.removeChild(divForEditChannel);
-  divForDeleteChannel.parentNode.removeChild(divForDeleteChannel);
+  activeChannel.sendMessage('http://localhost:8080/video/app/?roomName='+activeChannel.uniqueName);
+  // var divForEditChannel = document.getElementById('edit-channel');
+  // var divForDeleteChannel = document.getElementById('delete-channel');
+  // divForEditChannel.parentNode.removeChild(divForEditChannel);
+  // divForDeleteChannel.parentNode.removeChild(divForDeleteChannel);
   };
 
 function googleLogIn(googleUser) {
   var profile = googleUser.getBasicProfile();
-  var identity = profile.getEmail().toLowerCase();
+  var identity = profile.getName()+" ("+profile.getEmail().toLowerCase()+")";
   var fullName = profile.getName();
   logIn(identity, fullName);
 }
@@ -218,7 +219,7 @@ function logIn(identity, displayName) {
         });
 
         $('#profile label').text(client.user.friendlyName || client.user.identity);
-        $('#profile img').attr('src', 'http://gravatar.com/avatar/' + MD5(identity) + '?s=40&d=mm&r=g');
+        $('#profile img').attr('src', 'https://ui-avatars.com/api/?name='+client.user.identity.charAt(0)+"&length=1"+MD5(identity) + '?s=40&d=mm&r=g');
 
         client.user.on('updated', function() {
           $('#profile label').text(client.user.friendlyName || client.user.identity);
@@ -387,23 +388,22 @@ function updateMessage(args) {
 }
 
 function createMessage(message, $el) {
-  var $remove = $('<div class="remove-button glyphicon glyphicon-remove"/>')
-    .on('click', function(e) {
-      e.preventDefault();
-      message.remove();
-    }).appendTo($el);
+  // var $remove = $('<div class="remove-button glyphicon glyphicon-remove"/>')
+  //   .on('click', function(e) {
+  //     e.preventDefault();
+  //     message.remove();
+  //   }).appendTo($el);
 
-  var $edit = $('<div class="remove-button glyphicon glyphicon-edit"/>')
-    .on('click', function(e) {
-      e.preventDefault();
-      $('.body', $el).hide();
-      $('.edit-body', $el).show();
-      $('button', $el).show();
-      $el.addClass('editing');
-    }).appendTo($el);
-
+  // var $edit = $('<div class="remove-button glyphicon glyphicon-edit"/>')
+  //   .on('click', function(e) {
+  //     e.preventDefault();
+  //     $('.body', $el).hide();
+  //     $('.edit-body', $el).show();
+  //     $('button', $el).show();
+  //     $el.addClass('editing');
+  //   }).appendTo($el);
   var $img = $('<img/>')
-    .attr('src', 'http://gravatar.com/avatar/' + MD5(message.author) + '?s=30&d=mm&r=g')
+    .attr('src', 'https://ui-avatars.com/api/?name='+message.author.charAt(0)+"&length=1"+MD5(message.author) + '?s=40&d=mm&r=g')
     .appendTo($el);
 
   var $author = $('<p class="author"/>')
@@ -574,8 +574,9 @@ function updateMember(member, user) {
 
   if (!$lastRead.length) {
     $lastRead = $('<img/>')
-      .attr('src', 'http://gravatar.com/avatar/' + MD5(member.identity) + '?s=20&d=mm&r=g')
-      .attr('title', user.friendlyName || member.identity)
+    // .attr('src', 'http://gravatar.com/avatar/' + MD5(member.identity) + '?s=20&d=mm&r=g')
+    .attr('src', 'https://ui-avatars.com/api/?name='+member.identity.charAt(0)+"&length=1"+MD5(member.identity) + '?s=40&d=mm&r=g')
+    .attr('title', user.friendlyName || member.identity)
       .attr('data-identity', member.identity);
   }
 
@@ -586,7 +587,6 @@ function updateMember(member, user) {
 }
 
 function setActiveChannel(channel) {
-  alert(channel.lastUpdatedBy);
   if (activeChannel) {
     activeChannel.removeListener('messageAdded', addMessage);
     activeChannel.removeListener('messageRemoved', removeMessage);
