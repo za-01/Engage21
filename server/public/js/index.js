@@ -79,6 +79,7 @@ $(document).ready(function() {
 
   $('#join-channel').on('click', function() {
     activeChannel.join().then(setActiveChannel);
+    alert(activeChannel.createdClient);
   });
 
   $('#invite-user').on('click', function() {
@@ -175,10 +176,14 @@ $(document).ready(function() {
 });
 //Making Video Call for the channel
 document.getElementById("video-call-channel").onclick = function () {
-  window.open('http://localhost:3000/video/app/?roomName='+activeChannel.friendlyName, '_blank');
+  window.open('http://localhost:8080/video/app/?roomName='+activeChannel.friendlyName, '_blank');
   //  alert(activeChannel.friendlyName); 
   // alert(activeChannel.createdClient);
-  activeChannel.sendMessage('http://localhost:3000/video/app/?roomName='+activeChannel.friendlyName);
+  activeChannel.sendMessage('http://localhost:8080/video/app/?roomName='+activeChannel.friendlyName);
+  var divForEditChannel = document.getElementById('edit-channel');
+  var divForDeleteChannel = document.getElementById('delete-channel');
+  divForEditChannel.parentNode.removeChild(divForEditChannel);
+  divForDeleteChannel.parentNode.removeChild(divForDeleteChannel);
   };
 
 function googleLogIn(googleUser) {
@@ -581,6 +586,7 @@ function updateMember(member, user) {
 }
 
 function setActiveChannel(channel) {
+  alert(channel.lastUpdatedBy);
   if (activeChannel) {
     activeChannel.removeListener('messageAdded', addMessage);
     activeChannel.removeListener('messageRemoved', removeMessage);
