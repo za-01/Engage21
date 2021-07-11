@@ -132,9 +132,10 @@ body {
   padding: 10px;
   height: 60px;
   line-height: 40px;
-  background-color: #333;
+  background-color: #222;
   position: fixed;
-  border-bottom: 2px solid #666;
+  box-shadow: 0px 2px rgb(22, 22, 22);
+  /* border-bottom: 2px solid #666; */
 }
 
 .avatar {
@@ -231,8 +232,8 @@ body {
 }
 
 #sidebar li:hover {
-  background: #E30000;
-  border-radius: 5px;
+  background: rgb(50,50,50);
+  border-radius: 3px;
 }
 
 #sidebar li:hover div {
@@ -261,7 +262,7 @@ body {
   left: 250px;
   bottom: 0;
   right: 0;
-  background: #FAFAFF;
+  background: rgb(52, 52, 52);
 }
 
 #channel {
@@ -288,7 +289,7 @@ body {
 #no-channel p {
   padding: 50px;
   font-size: 2em;
-  color: #555;
+  color: rgb(189, 189, 189);
 }
 
 #channel-info {
@@ -297,9 +298,12 @@ body {
   left: 0;
   right: 0;
   height: 60px;
-  padding: 5px 10px;
-  background: #FFF;
-  border-bottom: 2px solid #666;
+  padding: 10px 20px;
+  color: #DDD;
+  background: rgb(42,42,42);
+  /* border-bottom: 2px rgb(255, 255, 255); */
+  box-shadow: 0px 2px rgb(22, 22, 22);
+  /* box-shadow: 0px 10px rgba(0,0,0, 0.75); */
 }
 
 #channel-info h1 {
@@ -332,7 +336,7 @@ div.edit-button {
   font-size: 16px;
   line-height: 20px;
   font-style: italic;
-  color: #444;
+  color:#DDD;
   margin: 0;
   padding: 0;
   display: inline-block;
@@ -344,11 +348,11 @@ div.edit-button {
   color: white;
   box-shadow: 2px 2px 2px rgba(0, 0, 0, 0.4);
   text-shadow: 1px 1px 1px rgba(0, 0, 0, 0.75);
-  background-color: #E30000;
+  background-color:darkgreen;
 }
 
 .red-button:hover {
-  background-color: #B30000;
+  background-color:green;
 }
 
 .white-button {
@@ -384,7 +388,7 @@ div.edit-button {
 
 #channel-body {
   position: absolute;
-  top: 60px;
+  top: 62px;
   left: 0;
   right: 0;
   bottom: 0;
@@ -397,6 +401,7 @@ div.edit-button {
   bottom: 0;
   right: 200px;
   overflow: hidden;
+  background-color: rgb(52, 52, 52);
 }
 
 #channel-messages {
@@ -405,6 +410,7 @@ div.edit-button {
   width: 100%;
   height: calc(100% - 70px);
   overflow-y: auto;
+  color: #DDD;
 }
 
 
@@ -440,7 +446,7 @@ div.edit-button {
   height: 16px;
   width: 16px;
   border-radius: 8px;
-  border: solid 1px #333;
+  border: solid 1px rgb(46, 37, 88);
   float: right;
   margin-left: 4px;
 }
@@ -457,7 +463,7 @@ div.edit-button {
 }
 
 #channel-messages li:nth-child(even) {
-  background: #F0F0FA;
+  background:rgb(62, 61, 62);
 }
 
 #channel-messages li.last-read {
@@ -480,9 +486,9 @@ div.edit-button {
   display: none;
 }
 
-#channel-messages li:hover {
+/* #channel-messages li:hover {
   background: #EBEBF0;
-}
+} */
 
 #channel-messages p.author {
   display: inline-block;
@@ -494,7 +500,7 @@ div.edit-button {
 
 #channel-messages .timestamp {
   font-style: italic;
-  color: #333;
+  color: rgb(255, 255, 255);
   margin-left: 4px;
 }
 
@@ -533,7 +539,7 @@ div.edit-button {
   bottom: 0;
   padding-bottom: 10px;
   border-top: 1px solid #AAA;
-  background: #F5F5F8;
+  background:#222;
 }
 
 #typing-indicator {
@@ -555,6 +561,8 @@ div.edit-button {
   right: 60px;
   padding: 0 10px;
   border-radius: 5px;
+  background-color: rgba(0, 0, 0, 0.75);
+  color: #DDD;
   border: 1px solid black;
 }
 
@@ -586,7 +594,7 @@ div.edit-button {
 #channel-members {
   position: absolute;
   right: 0;
-  top: 60px;
+  top: 62px;
   bottom: 0;
   width: 200px;
   border-left: 2px solid #667;
@@ -600,7 +608,7 @@ div.edit-button {
 }
 
 #channel-members button {
-  width: 80px;
+  width: 40px;
   margin-left: 10px;
   display: inline-block;
 }
@@ -634,8 +642,8 @@ div.edit-button {
 }
 
 #channel-members li:hover {
-  background: #E30000;
-  border-radius: 5px;
+  background: rgb(70,70,70);
+  border-radius: 3px;
 }
 
 #channel-members li:hover div {

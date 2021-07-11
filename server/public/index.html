@@ -5,7 +5,7 @@
   <title>Teams Clone</title>
   <meta name="google-signin-scope" content="profile">
   <meta name="google-signin-client_id" content="1003561219122-8e45ibd1i42tu1gnqvs15e49f8g7fq0v.apps.googleusercontent.com">
-
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC" crossorigin="anonymous">
   <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.5/css/bootstrap.min.css">
   <link rel="stylesheet" type="text/css" href="/css/main.css">
 </head>
@@ -20,12 +20,12 @@
   <div id="add-member" class="popup">
     <h3>Add User<div class="remove-button glyphicon glyphicon-remove"></div></h3>
     <input id="add-identity" placeholder="Identity"></input>
-    <button id="add-button" class="red-button">Add</button>
+    <button id="add-button" class="btn btn-secondary">Add</button>
   </div>
   <div id="invite-member" class="popup">
     <h3>Invite User<div class="remove-button glyphicon glyphicon-remove"></div></h3>
     <input id="invite-identity" placeholder="Identity"></input>
-    <button id="invite-button" class="red-button">Invite</button>
+    <button id="invite-button" class="btn btn-secondary">Invite</button>
   </div>
   <div id="update-channel" class="popup">
     <h3>Edit Channel<div class="remove-button glyphicon glyphicon-remove"></div></h3>
@@ -33,23 +33,15 @@
     <!-- <input id="update-channel-unique-name" placeholder="Unique Name (Optional)"/> -->
     <input id="update-channel-desc" placeholder="Description (Optional)"/>
     <input disabled="true" type="checkbox" id="update-channel-private"/><label>Private Channel</label>
-    <button id="update-channel-submit" class="red-button">Update Channel</button>
+    <button type="button" class="btn btn-warning">Update Channel</button>
   </div>
-  <!-- <div id="channel-call" class="popup">
-    <h3>Call Channel<div class="remove-button glyphicon glyphicon-remove"></div></h3>
-    <input id="update-channel-display-name" placeholder="Display Name"/>
-    <input id="update-channel-unique-name" placeholder="Unique Name (Optional)"/>
-    <input id="update-channel-desc" placeholder="Description (Optional)"/>
-    <input disabled="true" type="checkbox" id="update-channel-private"/><label>Private Channel</label>
-    <button id="update-channel-submit" class="red-button">Update Channel</button>
-  </div> -->
   <div id="create-channel" class="popup">
     <h3>Create Channel<div class="remove-button glyphicon glyphicon-remove"></div></h3>
     <input id="create-channel-display-name" placeholder="Display Name"/>
     <!-- <input id="create-channel-unique-name" placeholder="Unique Name (Optional)"/> -->
     <input id="create-channel-desc" placeholder="Description (Optional)"/>
     <input type="checkbox" id="create-channel-private"/><label>Private Channel</label>
-    <button id="create-new-channel" class="red-button">Create Channel</button>
+    <button id="create-new-channel" class="btn btn-outline-danger">Create Channel</button>
   </div>
   <div id="overlay"></div>
   <div id="sidebar">
@@ -72,7 +64,7 @@
         <ul></ul>
       </div>
       <div id="sidebar-footer">
-        <button id="create-channel-button" class="red-button">Create Channel</button>
+        <button id="create-channel-button" class="btn btn-outline-danger">Create Channel</button>
       </div>
     </div>
   </div>
@@ -85,8 +77,8 @@
     <div id="channel-info">
       <h1 id="channel-title"></h1>
       <h2 id="channel-desc"></h2>
-      <button id="edit-channel" class="white-button">Edit Channel</button>
-      <button id="delete-channel" class="red-button">Delete Channel</button>
+      <button id="edit-channel" class="btn btn-outline-warning">Edit Channel</button>
+      <button id="delete-channel" class="btn btn-outline-danger">Delete Channel</button>
     </div>
     <div id="channel-body">
       <div id="channel-chat">
@@ -94,16 +86,24 @@
         <div id="channel-message-send">
           <div id="typing-indicator"><span></span></div>
           <input type="textbox" id="message-body-input"></input>
-          <button id="send-message" class="red-button">Send</div>
+          <button id="send-message" class="btn btn-success"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-arrow-right-circle-fill" viewBox="0 0 16 16">
+            <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0zM4.5 7.5a.5.5 0 0 0 0 1h5.793l-2.147 2.146a.5.5 0 0 0 .708.708l3-3a.5.5 0 0 0 0-.708l-3-3a.5.5 0 1 0-.708.708L10.293 7.5H4.5z"/>
+          </svg></div>
         </div>
         <div id="channel-join-panel">
-          <button id="join-channel" class="red-button">Join this Channel</div>
+          <button id="join-channel" class="btn btn-success">Join this Channel</div>
         </div>
         <div id="channel-members">
           <h3>Members</h3>
-          <button id="add-user" class="red-button">Add</button>
-          <button id="invite-user" class="red-button">Invite</button>
-          <button id="video-call-channel" class="red-button" >Video Call</button>
+          <button id="add-user" class="btn btn-outline-light" title="Add User"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-plus-circle-fill" viewBox="0 0 16 16">
+            <path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zM8.5 4.5a.5.5 0 0 0-1 0v3h-3a.5.5 0 0 0 0 1h3v3a.5.5 0 0 0 1 0v-3h3a.5.5 0 0 0 0-1h-3v-3z"/>
+          </svg></button>
+          <button id="invite-user" class="btn btn-outline-light" title="Invite User"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-envelope-fill" viewBox="0 0 16 16">
+            <path d="M.05 3.555A2 2 0 0 1 2 2h12a2 2 0 0 1 1.95 1.555L8 8.414.05 3.555zM0 4.697v7.104l5.803-3.558L0 4.697zM6.761 8.83l-6.57 4.027A2 2 0 0 0 2 14h12a2 2 0 0 0 1.808-1.144l-6.57-4.027L8 9.586l-1.239-.757zm3.436-.586L16 11.801V4.697l-5.803 3.546z"/>
+          </svg></button>
+          <button id="video-call-channel" class="btn btn-outline-light"  title="Video Call with all members of the channel"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-camera-video-fill" viewBox="0 0 16 16">
+            <path fill-rule="evenodd" d="M0 5a2 2 0 0 1 2-2h7.5a2 2 0 0 1 1.983 1.738l3.11-1.382A1 1 0 0 1 16 4.269v7.462a1 1 0 0 1-1.406.913l-3.111-1.382A2 2 0 0 1 9.5 13H2a2 2 0 0 1-2-2V5z"/>
+          </svg></button>
           <ul></ul>
         </div>
       </div>
