@@ -79,7 +79,6 @@ $(document).ready(function() {
 
   $('#join-channel').on('click', function() {
     activeChannel.join().then(setActiveChannel);
-    alert(activeChannel.createdClient);
   });
 
   $('#invite-user').on('click', function() {
