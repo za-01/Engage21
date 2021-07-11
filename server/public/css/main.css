@@ -8,6 +8,20 @@ body {
   font-family: Open Sans, sans serif;
 }
 
+.btn-outline-primary {
+  color: white;
+  background-color: #BB86FC;
+  background-image: none;
+  border-color: transparent;
+}
+
+.btn-outline-primary:hover {
+  color: white;
+  background-color: #3700B3;
+  border-color: transparent;
+}
+.btn-outline-primary{
+}
 .popup {
   position: absolute;
   border-radius: 5px;
