@@ -559,7 +559,7 @@ div.edit-button {
 #typing-indicator {
   padding: 5px 15px;
   font-style: italic;
-  color: #444;
+  color: rgb(184, 184, 184);
 }
 
 #typing-indicator span {
