@@ -1,6 +1,6 @@
 # Engage21
 
-Spreadsheet Link: https://docs.google.com/spreadsheets/d/1me--TfGnOK0MEsK2VLpypR5Su4lVmHqb/edit#gid=146731134 \
-Doc about Technologies: https://docs.google.com/document/d/1Sm8pUQClxVGTaS2V_Q3PLs9QKUk34godcA1Ie21cPUc/edit?usp=sharing
-
+Agile Spreadsheet Link: https://docs.google.com/spreadsheets/d/1me--TfGnOK0MEsK2VLpypR5Su4lVmHqb/edit#gid=146731134 \
+Report Link: https://docs.google.com/presentation/d/1bgA7Uu_3OQ7vhitLIO-85oQKr-2fOKLcK-pga6q6zb4/edit#slide=id.gb820e0a48e_0_76
+Architecture Diagram: https://drive.google.com/drive/folders/1Y1SPS16RlCLkkkTBFWNUjx1GGlpKE1yk?usp=sharing
 References: Twilio Blog
